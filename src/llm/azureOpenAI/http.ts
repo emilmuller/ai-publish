@@ -125,7 +125,7 @@ async function azureResponsesCompletion(
 		...(systemInstructions ? { instructions: systemInstructions } : {}),
 		input: inputMessages,
 		max_output_tokens: maxTokens,
-		temperature: params.temperature ?? 0,
+		// Some Azure reasoning-model deployments reject `temperature` entirely.
 		...(reasoningEffortFromEnv() !== undefined ? { reasoning: { effort: reasoningEffortFromEnv() } } : {}),
 		...(textFormat ? { text: { format: textFormat } } : {})
 	})
