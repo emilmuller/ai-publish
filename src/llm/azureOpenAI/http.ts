@@ -34,6 +34,15 @@ function useResponsesApiFromEnv(): boolean {
 	return raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes"
 }
 
+function reasoningEffortFromEnv(): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null | undefined {
+	const raw = (process.env.AZURE_OPENAI_REASONING_EFFORT ?? process.env.AI_PUBLISH_REASONING_EFFORT ?? "").trim()
+	if (!raw) return undefined
+	const v = raw.toLowerCase()
+	if (v === "none" || v === "minimal" || v === "low" || v === "medium" || v === "high" || v === "xhigh") return v
+	if (v === "null") return null
+	return undefined
+}
+
 function parseResponsesOutputText(json: any): string {
 	if (typeof json?.output_text === "string" && json.output_text.trim()) return json.output_text
 
@@ -99,10 +108,9 @@ async function azureResponsesCompletion(
 		.join("\n\n")
 	const inputMessages = params.messages
 		.filter((m) => m.role !== "system")
-		.map((m) => ({
-			role: m.role,
-			content: [{ type: "input_text", text: m.content }]
-		}))
+		// Azure Responses API appears to be stricter/behind on the multi-part content schema.
+		// Using string `content` is supported by the OpenAI SDK types and avoids Azure rejecting `input_text`.
+		.map((m) => ({ role: m.role, content: m.content }))
 
 	const textFormat = mapChatResponseFormatToResponsesTextFormat(params.responseFormat)
 
@@ -118,6 +126,7 @@ async function azureResponsesCompletion(
 		input: inputMessages,
 		max_output_tokens: maxTokens,
 		temperature: params.temperature ?? 0,
+		...(reasoningEffortFromEnv() !== undefined ? { reasoning: { effort: reasoningEffortFromEnv() } } : {}),
 		...(textFormat ? { text: { format: textFormat } } : {})
 	})
 

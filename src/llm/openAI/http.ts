@@ -3,6 +3,15 @@ import { getOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
+function reasoningEffortFromEnv(): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null | undefined {
+	const raw = (process.env.OPENAI_REASONING_EFFORT ?? process.env.AI_PUBLISH_REASONING_EFFORT ?? "").trim()
+	if (!raw) return undefined
+	const v = raw.toLowerCase()
+	if (v === "none" || v === "minimal" || v === "low" || v === "medium" || v === "high" || v === "xhigh") return v
+	if (v === "null") return null
+	return undefined
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -83,7 +92,7 @@ export async function openAIChatCompletion(
 			.join("\n\n")
 		const inputMessages = params.messages
 			.filter((m) => m.role !== "system")
-			.map((m) => ({ role: m.role, content: [{ type: "input_text", text: m.content }] }))
+			.map((m) => ({ role: m.role, content: m.content }))
 
 		const maxTokens = params.maxTokens ?? 1200
 		const textFormat = mapChatResponseFormatToResponsesTextFormat(params.responseFormat)
@@ -93,6 +102,7 @@ export async function openAIChatCompletion(
 			input: inputMessages,
 			max_output_tokens: maxTokens,
 			temperature: params.temperature ?? 0,
+			...(reasoningEffortFromEnv() !== undefined ? { reasoning: { effort: reasoningEffortFromEnv() } } : {}),
 			...(textFormat ? { text: { format: textFormat } } : {})
 		})
 
