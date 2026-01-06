@@ -66,6 +66,12 @@ export async function indexUnifiedDiffToDir(params: {
 		}
 	)
 
+	// Attach exit handlers immediately to avoid missing a fast "close" event.
+	const closePromise: Promise<number> = new Promise((resolve, reject) => {
+		child.on("error", reject)
+		child.on("close", (code) => resolve(code ?? 0))
+	})
+
 	child.stdout.setEncoding("utf8")
 
 	let stderr = ""
@@ -276,7 +282,7 @@ export async function indexUnifiedDiffToDir(params: {
 		await handleLine(buffered.replace(/\r$/, ""))
 	}
 
-	const exitCode: number = await new Promise((resolve) => child.on("close", (code) => resolve(code ?? 0)))
+	const exitCode: number = await closePromise
 	if (exitCode !== 0) {
 		throw new Error(`git diff failed (exit ${exitCode})${stderr.trim() ? `\n${stderr.trim()}` : ""}`)
 	}
