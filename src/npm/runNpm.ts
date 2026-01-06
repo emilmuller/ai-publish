@@ -10,10 +10,16 @@ export async function runNpmCapture(
 	options: RunNpmOptions = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const { cwd, maxStderrBytes = 128 * 1024 } = options
-	const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+	// Windows note:
+	// On some newer Node.js versions (observed on Node v25.x), spawning `npm.cmd`
+	// directly can fail with `spawn EINVAL`. Running npm through `cmd.exe /c` is
+	// more robust.
+	const isWin = process.platform === "win32"
+	const command = isWin ? "cmd.exe" : "npm"
+	const commandArgs = isWin ? ["/d", "/s", "/c", "npm", ...args] : args
 
 	return await new Promise((resolve, reject) => {
-		const child = spawn(npmCommand, args, {
+		const child = spawn(command, commandArgs, {
 			cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true
