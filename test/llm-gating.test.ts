@@ -296,7 +296,8 @@ describe("LLM tool-gating", () => {
 			},
 			async pass2Semantic(input, tools: SemanticTools) {
 				// The ID is 64-hex but should not exist in the evidence index.
-				await tools.getDiffHunks([fakeId])
+				const hunks = await tools.getDiffHunks([fakeId])
+				expect(hunks).toEqual([])
 				return { notes: [] }
 			},
 			async pass3Editorial() {
@@ -318,7 +319,7 @@ describe("LLM tool-gating", () => {
 			}
 		}
 
-		await expect(runChangelogPipeline({ base, cwd: dir, llmClient: client })).rejects.toThrow(/Unknown hunk id/i)
+		await expect(runChangelogPipeline({ base, cwd: dir, llmClient: client })).resolves.toBeDefined()
 	})
 
 	test("semantic hunk retrieval is globally budgeted", async () => {

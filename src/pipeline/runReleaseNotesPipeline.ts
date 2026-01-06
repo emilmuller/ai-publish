@@ -12,6 +12,16 @@ import { searchRepoPaths } from "../repo/searchRepoPaths"
 import { searchRepoText } from "../repo/searchRepoText"
 import { listRepoFiles } from "../repo/listRepoFiles"
 
+function debugEnabled(): boolean {
+	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
+}
+
+function debugLog(...args: any[]) {
+	if (!debugEnabled()) return
+	// eslint-disable-next-line no-console
+	console.error("[ai-publish][debug]", ...args)
+}
+
 export async function runReleaseNotesPipeline(params: {
 	base: string
 	/** Optional label for rendering output (does not affect diff authority). */
@@ -71,13 +81,19 @@ export async function runReleaseNotesPipeline(params: {
 		{ base: params.base, mechanical, evidence, resolvedInstructions },
 		{
 			getDiffHunks: async (hunkIds) => {
-				for (const id of hunkIds) {
-					if (!allowedHunkIds.has(id)) throw new Error(`Unknown hunk id (not in evidence index): ${id}`)
+				const unknown = hunkIds.filter((id) => !allowedHunkIds.has(id))
+				if (unknown.length) {
+					debugLog("releaseNotesPipeline:semantic:unknownHunkIds", {
+						count: unknown.length,
+						sample: unknown.slice(0, 5)
+					})
 				}
+				const allowed = hunkIds.filter((id) => allowedHunkIds.has(id))
+				if (!allowed.length) return []
 				if (remainingBytes <= 0) throw new Error("LLM hunk budget exhausted")
 				const hunks = await getDiffHunks({
 					base: params.base,
-					hunkIds,
+					hunkIds: allowed,
 					cwd,
 					maxTotalBytes: remainingBytes
 				})
