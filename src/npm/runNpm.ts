@@ -10,9 +10,10 @@ export async function runNpmCapture(
 	options: RunNpmOptions = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const { cwd, maxStderrBytes = 128 * 1024 } = options
+	const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
 
 	return await new Promise((resolve, reject) => {
-		const child = spawn("npm", args, {
+		const child = spawn(npmCommand, args, {
 			cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true
