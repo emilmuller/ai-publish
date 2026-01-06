@@ -156,7 +156,22 @@ async function streamGitShowRange(params: {
 
 			const exitCode = code ?? 0
 			if (exitCode !== 0) {
-				const suffix = stderr.trim() ? `\n${stderr.trim()}` : ""
+				// Missing paths are expected for "best effort" context lookups.
+				// Example: the model may ask for src/index.js even if the repo is TS-only.
+				// Treat as an empty snippet rather than failing the whole pipeline.
+				const trimmed = stderr.trim()
+				if (exitCode === 128 && /fatal: path '.+' does not exist in/.test(trimmed)) {
+					return resolve({
+						path,
+						ref,
+						startLine,
+						endLine,
+						lines: [],
+						isTruncated: false,
+						byteLength: 0
+					})
+				}
+				const suffix = trimmed ? `\n${trimmed}` : ""
 				return reject(new Error(`git show ${ref}:${path} failed (exit ${exitCode})${suffix}`))
 			}
 			finishOk()
