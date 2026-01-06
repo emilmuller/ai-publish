@@ -16,6 +16,17 @@ function debugLog(...args: any[]) {
 	console.error("[ai-publish][debug]", ...args)
 }
 
+function maxTokensFromEnv(): number | undefined {
+	const raw = process.env.AZURE_OPENAI_MAX_TOKENS
+	if (!raw || !raw.trim()) return undefined
+	const n = Number(raw)
+	if (!Number.isFinite(n)) return undefined
+	// Keep within a reasonable range to avoid accidental extremes.
+	const MIN = 64
+	const MAX = 32_000
+	return Math.max(MIN, Math.min(MAX, Math.trunc(n)))
+}
+
 function getRetryAfterMs(res: Response): number | null {
 	const raw = res.headers.get("retry-after")
 	if (!raw) return null
@@ -82,7 +93,7 @@ async function azureChatCompletionInner(
 	// `max_completion_tokens`. For compatibility across deployments, negotiate the correct field
 	// once, then apply retries/backoff for transient failures.
 	let tokenField: "max_completion_tokens" | "max_tokens" = "max_completion_tokens"
-	const maxTokens = params.maxTokens ?? 1200
+	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
 
 	function makeBody(withFormat: boolean): any {
 		const baseBody = makeBaseBody(withFormat)

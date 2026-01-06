@@ -286,7 +286,7 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 					"Semantic pass request",
 					conversation,
 					jsonSchemaResponseFormat("semantic_request", schemaSemanticRequest),
-					{ maxTokens: 1400 }
+					{ maxTokens: 4096 }
 				)
 
 				const requestHunkIds = coerceStringArray(req.requestHunkIds)
