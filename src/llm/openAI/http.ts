@@ -1,4 +1,5 @@
 import type { OpenAIConfig } from "./config"
+import { getOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
@@ -50,6 +51,64 @@ export async function openAIChatCompletion(
 		responseFormat?: any
 	}
 ): Promise<string> {
+	function mapChatResponseFormatToResponsesTextFormat(responseFormat: any): any | undefined {
+		if (!responseFormat || typeof responseFormat !== "object") return undefined
+		const t = responseFormat.type
+		if (t === "json_schema") {
+			const js = responseFormat.json_schema
+			if (!js || typeof js !== "object") return undefined
+			return {
+				type: "json_schema",
+				...(typeof js.name === "string" ? { name: js.name } : {}),
+				...(typeof js.description === "string" ? { description: js.description } : {}),
+				...(js.schema && typeof js.schema === "object" ? { schema: js.schema } : {}),
+				...(typeof js.strict === "boolean" ? { strict: js.strict } : {})
+			}
+		}
+		if (t === "json_object") return { type: "json_object" }
+		if (t === "text") return { type: "text" }
+		return undefined
+	}
+
+	async function tryResponsesApi(): Promise<string> {
+		const client = await getOpenAIClient({
+			apiKey: cfg.apiKey,
+			baseUrl: cfg.baseUrl,
+			requestTimeoutMs: cfg.requestTimeoutMs
+		})
+		const systemInstructions = params.messages
+			.filter((m) => m.role === "system")
+			.map((m) => m.content)
+			.filter(Boolean)
+			.join("\n\n")
+		const inputMessages = params.messages
+			.filter((m) => m.role !== "system")
+			.map((m) => ({ role: m.role, content: [{ type: "input_text", text: m.content }] }))
+
+		const maxTokens = params.maxTokens ?? 1200
+		const textFormat = mapChatResponseFormatToResponsesTextFormat(params.responseFormat)
+		const response = await client.responses.create({
+			model: cfg.model,
+			...(systemInstructions ? { instructions: systemInstructions } : {}),
+			input: inputMessages,
+			max_output_tokens: maxTokens,
+			temperature: params.temperature ?? 0,
+			...(textFormat ? { text: { format: textFormat } } : {})
+		})
+
+		const outputText = typeof response?.output_text === "string" ? response.output_text : ""
+		if (!outputText.trim()) throw new Error("OpenAI Responses API returned empty output_text")
+		return outputText
+	}
+
+	// Prefer Responses API (best option on OpenAI).
+	// If it fails (older model/deployment, transient issues), fall back to Chat Completions.
+	try {
+		return await tryResponsesApi()
+	} catch {
+		// Fall through to legacy HTTP implementation.
+	}
+
 	const url = `${cfg.baseUrl}/chat/completions`
 
 	async function postJson(body: any): Promise<Response> {

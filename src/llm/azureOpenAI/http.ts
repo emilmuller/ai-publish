@@ -1,4 +1,5 @@
 import type { AzureOpenAIConfig } from "./config"
+import { getAzureOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
@@ -50,6 +51,35 @@ function parseResponsesOutputText(json: any): string {
 	return parts.join("")
 }
 
+function responsesApiVersionFromEnvOrCfg(cfg: AzureOpenAIConfig): string {
+	const raw = process.env.AZURE_OPENAI_RESPONSES_API_VERSION
+	if (raw && raw.trim()) return raw.trim()
+	// Azure Responses API is currently documented on newer preview API versions.
+	if (/^2025-\d{2}-\d{2}(-preview)?$/i.test(cfg.apiVersion)) return cfg.apiVersion
+	return "2025-04-01-preview"
+}
+
+function mapChatResponseFormatToResponsesTextFormat(responseFormat: any): any | undefined {
+	if (!responseFormat || typeof responseFormat !== "object") return undefined
+	const t = responseFormat.type
+	if (t === "json_schema") {
+		const js = responseFormat.json_schema
+		if (!js || typeof js !== "object") return undefined
+		// Chat Completions: { type: 'json_schema', json_schema: { name, description?, schema, strict? } }
+		// Responses: { type: 'json_schema', name, description?, schema, strict? }
+		return {
+			type: "json_schema",
+			...(typeof js.name === "string" ? { name: js.name } : {}),
+			...(typeof js.description === "string" ? { description: js.description } : {}),
+			...(js.schema && typeof js.schema === "object" ? { schema: js.schema } : {}),
+			...(typeof js.strict === "boolean" ? { strict: js.strict } : {})
+		}
+	}
+	if (t === "json_object") return { type: "json_object" }
+	if (t === "text") return { type: "text" }
+	return undefined
+}
+
 async function azureResponsesCompletion(
 	cfg: AzureOpenAIConfig,
 	params: {
@@ -59,10 +89,8 @@ async function azureResponsesCompletion(
 		responseFormat?: any
 	}
 ): Promise<string> {
-	// Azure OpenAI v1 Responses API:
-	// POST {endpoint}/openai/v1/responses
-	const url = `${cfg.endpoint}/openai/v1/responses`
 	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
+	const responsesApiVersion = responsesApiVersionFromEnvOrCfg(cfg)
 
 	const systemInstructions = params.messages
 		.filter((m) => m.role === "system")
@@ -71,35 +99,29 @@ async function azureResponsesCompletion(
 		.join("\n\n")
 	const inputMessages = params.messages
 		.filter((m) => m.role !== "system")
-		.map((m) => ({ role: m.role, content: m.content }))
+		.map((m) => ({
+			role: m.role,
+			content: [{ type: "input_text", text: m.content }]
+		}))
 
-	const res = await fetchWithTimeout(
-		url,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"api-key": cfg.apiKey
-			},
-			body: JSON.stringify({
-				model: cfg.deployment,
-				...(systemInstructions ? { instructions: systemInstructions } : {}),
-				input: inputMessages,
-				temperature: params.temperature ?? 0,
-				max_output_tokens: maxTokens,
-				...(params.responseFormat ? { response_format: params.responseFormat } : {})
-			})
-		},
-		cfg.requestTimeoutMs
-	)
+	const textFormat = mapChatResponseFormatToResponsesTextFormat(params.responseFormat)
 
-	if (!res.ok) {
-		const text = await res.text().catch(() => "")
-		const msg = text || res.statusText
-		throw new Error(`Azure OpenAI responses request failed (${res.status}): ${msg}`)
-	}
+	const client = await getAzureOpenAIClient({
+		endpoint: cfg.endpoint,
+		apiKey: cfg.apiKey,
+		apiVersion: responsesApiVersion,
+		requestTimeoutMs: cfg.requestTimeoutMs
+	})
+	const response = await client.responses.create({
+		model: cfg.deployment,
+		...(systemInstructions ? { instructions: systemInstructions } : {}),
+		input: inputMessages,
+		max_output_tokens: maxTokens,
+		temperature: params.temperature ?? 0,
+		...(textFormat ? { text: { format: textFormat } } : {})
+	})
 
-	const json = (await res.json()) as any
+	const json = response as any
 	if (debugEnabled()) {
 		debugLog("azureResponsesCompletion:ok", {
 			model: json?.model,
@@ -112,7 +134,7 @@ async function azureResponsesCompletion(
 	if (typeof text !== "string" || !text.trim()) {
 		if (debugEnabled()) {
 			debugLog("azureResponsesCompletion:missingOutputText", {
-				status: res.status,
+				status: json?.status,
 				model: json?.model,
 				statusText: json?.status
 			})
