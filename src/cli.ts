@@ -76,9 +76,13 @@ function takeValue(args: string[], i: number, flag: string): string {
 		throw new Error(`Missing value for ${flag}`)
 	}
 	return v
-}
-
-export function parseCliArgs(argv: string[]): ParsedArgs {
+	const envDebug = debugEnabledFromEnv()
+	debugLog(envDebug, "argv", process.argv)
+	debugLog(
+		envDebug,
+		"require.main===module",
+		typeof require !== "undefined" ? require.main === module : "(no require)"
+	)
 	const args = [...argv]
 
 	if (args.length === 0) return { command: "help" }
@@ -207,6 +211,11 @@ async function main() {
 		parsed = parseCliArgs(process.argv.slice(2))
 	} catch (err: any) {
 		// eslint-disable-next-line no-console
+		const debug = !!(parsed as any).debug || envDebug
+		// If --debug is set, enable deep debug logs throughout the process.
+		if (debug && process.env.AI_PUBLISH_DEBUG_CLI !== "1") {
+			process.env.AI_PUBLISH_DEBUG_CLI = "1"
+		}
 		console.error(err?.message ?? String(err))
 		usage(2)
 	}
