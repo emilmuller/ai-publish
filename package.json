@@ -1,6 +1,6 @@
 {
   "name": "ai-publish",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "AI-assisted release authoring tool that generates a changelog, release notes, and a next version number (evidence-backed from git diff).",
   "author": "Emil Müller",
   "license": "MIT",
