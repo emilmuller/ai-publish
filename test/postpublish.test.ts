@@ -24,6 +24,11 @@ describe("postpublish pipeline", () => {
 		const pre = await runPrepublishPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
 		expect(pre.predictedTag).toBe("v1.2.4")
 
+		// Prepublish should NOT create the tag.
+		await expect(
+			runGitOrThrow(["rev-parse", "-q", "--verify", "refs/tags/v1.2.4"], { cwd: dir })
+		).rejects.toBeDefined()
+
 		const post = await runPostpublishPipeline({
 			cwd: dir,
 			remote: "origin",
@@ -58,6 +63,9 @@ describe("postpublish pipeline", () => {
 		await commitChange(dir, "config.yml", "name: changed\n", "change config")
 
 		await runPrepublishPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
+		await expect(
+			runGitOrThrow(["rev-parse", "-q", "--verify", "refs/tags/v1.2.4"], { cwd: dir })
+		).rejects.toBeDefined()
 
 		await expect(
 			runPostpublishPipeline({
@@ -69,7 +77,12 @@ describe("postpublish pipeline", () => {
 			})
 		).rejects.toThrow(/publish failed/)
 
+		// Should not create the tag locally on failure.
+		await expect(
+			runGitOrThrow(["rev-parse", "-q", "--verify", "refs/tags/v1.2.4"], { cwd: dir })
+		).rejects.toBeDefined()
+
 		const remoteTag = await gitShowRef(remoteDir, "refs/tags/v1.2.4")
 		expect(remoteTag.found).toBe(false)
-	})
+	}, 60_000)
 })

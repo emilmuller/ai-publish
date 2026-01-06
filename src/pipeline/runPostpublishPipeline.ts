@@ -1,14 +1,15 @@
 import type { LLMClient } from "../llm/types"
-import { resolveHeadVersionTagFromGitTags } from "../version/resolveVersionBase"
-import { assertCleanWorktree, getCurrentBranch, getHeadSha, getTagTargetSha, pushBranchAndTag } from "../git/release"
+import { getCurrentBranch, pushBranchAndTag, createReleaseCommit, createAnnotatedTag, tagExists } from "../git/release"
 import { runNpmOrThrow } from "../npm/runNpm"
 import type { ManifestType } from "../version/manifests"
 import { runCargoOrThrow } from "../rust/runCargo"
 import { runPythonOrThrow } from "../python/runPython"
+import { readFile } from "node:fs/promises"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { dirname, resolve } from "node:path"
 import { runDotnetOrThrow } from "../dotnet/runDotnet"
+import { runGitOrThrow } from "../git/runGit"
 
 async function listDotnetPackages(params: { cwd: string; projectPath: string }): Promise<string[]> {
 	const projectAbs = resolve(params.cwd, params.projectPath)
@@ -71,11 +72,8 @@ async function defaultPublishRunner(params: {
 			)
 		}
 
-		// Pack to a deterministic location (default bin/Release). We keep it minimal: Release config + CI build.
-		await runDotnetOrThrow(["pack", projectPath, "-c", "Release", "-p:ContinuousIntegrationBuild=true"], {
-			cwd: params.cwd
-		})
-
+		// User is expected to build/pack before calling postpublish.
+		// We only push already-produced .nupkg files from the conventional bin/Release output.
 		const pkgs = await listDotnetPackages({ cwd: params.cwd, projectPath })
 		for (const pkgAbs of pkgs) {
 			await runDotnetOrThrow(
@@ -96,10 +94,7 @@ async function defaultPublishRunner(params: {
 		return
 	}
 	if (params.projectType === "python") {
-		// Standard Python publishing flow (PyPI-like):
-		// 1) build: produces dist/*
-		// 2) upload: twine uploads the built artifacts
-		await runPythonOrThrow(["-m", "build"], { cwd: params.cwd })
+		// User is expected to build before calling postpublish (dist/* must exist).
 		const artifacts = await listPythonDistArtifacts(params.cwd)
 		await runPythonOrThrow(["-m", "twine", "upload", ...artifacts], { cwd: params.cwd })
 		return
@@ -122,19 +117,83 @@ export async function runPostpublishPipeline(params: {
 	const cwd = params.cwd ?? process.cwd()
 	const remote = params.remote ?? "origin"
 	const projectType: ManifestType = params.projectType ?? "npm"
-
-	await assertCleanWorktree({ cwd })
 	const branch = await getCurrentBranch({ cwd })
 
-	const head = await resolveHeadVersionTagFromGitTags({ cwd })
-	if (!head.headTag) {
-		throw new Error("HEAD is not tagged with a version tag. Run prepublish first.")
+	// Prepublish writes a small intent file (ignored by git) so postpublish can
+	// create the release commit + tag *after* publish succeeds.
+	const intentPath = resolve(cwd, ".ai-publish", "prepublish.json")
+	let intentRaw: string
+	try {
+		intentRaw = await readFile(intentPath, "utf8")
+	} catch {
+		throw new Error("Missing .ai-publish/prepublish.json. Run prepublish first.")
 	}
 
-	const headSha = await getHeadSha({ cwd })
-	const tagTarget = await getTagTargetSha({ cwd, tag: head.headTag })
-	if (tagTarget !== headSha) {
-		throw new Error(`Version tag ${head.headTag} does not point at HEAD. Refusing to publish/push.`)
+	const intent = JSON.parse(intentRaw) as {
+		predictedTag: string
+		pathsToCommit: string[]
+		commitMessage: string
+		tagMessage: string
+		manifestType: ManifestType
+		manifestPath: string
+	}
+
+	if (!intent.predictedTag || !/^v\d+\.\d+\.\d+(?:[-+].+)?$/.test(intent.predictedTag)) {
+		throw new Error("Invalid prepublish intent: predictedTag")
+	}
+	if (!Array.isArray(intent.pathsToCommit) || intent.pathsToCommit.length === 0) {
+		throw new Error("Invalid prepublish intent: pathsToCommit")
+	}
+	if (!intent.commitMessage || !intent.tagMessage) {
+		throw new Error("Invalid prepublish intent: commitMessage/tagMessage")
+	}
+
+	if (await tagExists({ cwd, tag: intent.predictedTag })) {
+		throw new Error(`Tag already exists: ${intent.predictedTag}`)
+	}
+
+	// Safety: refuse to run if there are local changes outside the release paths.
+	// IMPORTANT: do not use .trim() here; it can remove the leading space from the
+	// first porcelain line (e.g. " M package.json"), which breaks path parsing.
+	const status = (await runGitOrThrow(["status", "--porcelain"], { cwd })).trimEnd()
+	if (status.trim().length > 0) {
+		const allowed = new Set(intent.pathsToCommit.map((p) => p.replace(/\\/g, "/")))
+		const isAllowedPath = (path: string): boolean => {
+			if (allowed.has(path)) return true
+			// `git status --porcelain` may report untracked directories as `dir/`.
+			// Treat that as allowed if any explicitly allowed file lives under it.
+			if (path.endsWith("/")) {
+				for (const a of allowed) {
+					if (a.startsWith(path)) return true
+				}
+				return false
+			}
+			// Also allow if the intent explicitly allows a directory prefix.
+			for (const a of allowed) {
+				if (a.endsWith("/") && path.startsWith(a)) return true
+			}
+			return false
+		}
+		const changedPaths = status
+			.split(/\r?\n/)
+			.filter((line) => line.trim().length > 0)
+			.map((line) => {
+				// Porcelain: XY <path> or XY <old> -> <new>
+				// Important: do NOT trim leading whitespace; it is part of the XY columns.
+				const withoutStatus = line.slice(3)
+				const arrow = withoutStatus.lastIndexOf("->")
+				const path = arrow >= 0 ? withoutStatus.slice(arrow + 2).trim() : withoutStatus.trim()
+				return path.replace(/\\/g, "/")
+			})
+
+		const unexpected = changedPaths.filter((p) => !isAllowedPath(p))
+		if (unexpected.length) {
+			throw new Error(
+				"Working tree contains changes outside release outputs. " +
+					"Commit/stash them before postpublish. Unexpected: " +
+					unexpected.sort().join(", ")
+			)
+		}
 	}
 
 	const publish =
@@ -142,6 +201,16 @@ export async function runPostpublishPipeline(params: {
 		((p: { cwd: string }) => defaultPublishRunner({ ...p, projectType, manifestPath: params.manifestPath }))
 	await publish({ cwd })
 
-	await pushBranchAndTag({ cwd, remote, branch, tag: head.headTag })
-	return { tag: head.headTag, branch, remote }
+	// Publish succeeded. Now create release commit + annotated tag, then push.
+	const { commitSha } = await createReleaseCommit({ cwd, paths: intent.pathsToCommit, message: intent.commitMessage })
+	await createAnnotatedTag({ cwd, tag: intent.predictedTag, message: intent.tagMessage })
+
+	// Sanity: tag should point at the new commit.
+	const tagTarget = (await runGitOrThrow(["rev-list", "-n", "1", intent.predictedTag], { cwd })).trim()
+	if (tagTarget !== commitSha) {
+		throw new Error(`Internal error: created tag ${intent.predictedTag} does not point at release commit`)
+	}
+
+	await pushBranchAndTag({ cwd, remote, branch, tag: intent.predictedTag })
+	return { tag: intent.predictedTag, branch, remote }
 }

@@ -45,7 +45,7 @@ type ParsedArgs =
 			command: "postpublish"
 			projectType: "npm" | "dotnet" | "rust" | "python" | "go"
 			manifestPath?: string
-			llm: "azure" | "openai"
+			llm?: "azure" | "openai"
 	  }
 
 export function formatUsage(): string {
@@ -54,11 +54,11 @@ export function formatUsage(): string {
 		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--no-write] [--out <path>] --llm <azure|openai> [--debug]",
-		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--debug]",
 		"  ai-publish --help",
 		"",
 		"Notes:",
-		"  - LLM mode is required; use --llm azure or --llm openai.",
+		"  - LLM mode is required for changelog/release-notes/prepublish; use --llm azure or --llm openai.",
 		"  - --debug enables verbose stderr diagnostics.",
 		"  - If --base is omitted, the tool diffs from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
 		"  - Unknown flags are rejected."
@@ -201,10 +201,10 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 		}
 	}
 
-	if (!llm) throw new Error("Missing required flag: --llm")
+	if (command !== "postpublish" && !llm) throw new Error("Missing required flag: --llm")
 
-	if (command === "changelog") return { command: "changelog", base, outPath, outProvided, llm }
-	if (command === "release-notes") return { command: "release-notes", base, outPath, outProvided, llm }
+	if (command === "changelog") return { command: "changelog", base, outPath, outProvided, llm: llm! }
+	if (command === "release-notes") return { command: "release-notes", base, outPath, outProvided, llm: llm! }
 	if (command === "prepublish") {
 		return {
 			command: "prepublish",
@@ -214,7 +214,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			packageJsonPath,
 			changelogOutPath: outPath,
 			outProvided,
-			llm
+			llm: llm!
 		}
 	}
 	if (command === "postpublish") return { command: "postpublish", projectType, manifestPath, llm }
@@ -240,12 +240,14 @@ async function main() {
 	if (parsed.command === "help") usage(0)
 
 	const llmClient =
-		parsed.llm === "azure"
+		parsed.command === "postpublish"
+			? undefined
+			: parsed.llm === "azure"
 			? createAzureOpenAILLMClient()
 			: parsed.llm === "openai"
 			? createOpenAILLMClient()
 			: undefined
-	if (!llmClient) throw new Error("LLM client is required")
+	if (parsed.command !== "postpublish" && !llmClient) throw new Error("LLM client is required")
 
 	let markdown = ""
 	let baseUsed: string | undefined
@@ -277,7 +279,8 @@ async function main() {
 			headTag = resolvedHead.headTag
 			headLabel = resolvedHead.headTag ?? "HEAD"
 		}
-		const generated = await runChangelogPipeline({ base: baseUsed, baseLabel, headLabel, llmClient })
+		const generated = await runChangelogPipeline({ base: baseUsed, baseLabel, headLabel, llmClient: llmClient! })
+		// (llmClient is required for changelog)
 		const validation = validateChangelogModel(generated.model)
 		if (!validation.ok) {
 			throw new Error(`Changelog model validation failed:\n${validation.errors.join("\n")}`)
@@ -314,7 +317,7 @@ async function main() {
 			} else if (!parsed.base) {
 				const bumped = await runVersionBumpPipeline({
 					cwd: process.cwd(),
-					llmClient,
+					llmClient: llmClient!,
 					manifest: { type: "npm", path: "package.json", write: false }
 				})
 				const predictedTag = `v${bumped.nextVersion}`
@@ -322,12 +325,12 @@ async function main() {
 				headLabel = predictedTag
 			}
 		}
-		const generated = await runReleaseNotesPipeline({ base: baseUsed, baseLabel, headLabel, llmClient })
+		const generated = await runReleaseNotesPipeline({ base: baseUsed, baseLabel, headLabel, llmClient: llmClient! })
 		markdown = generated.markdown
 	} else if (parsed.command === "prepublish") {
 		const pre = await runPrepublishPipeline({
 			cwd: process.cwd(),
-			llmClient,
+			llmClient: llmClient!,
 			packageJsonPath: parsed.packageJsonPath,
 			manifest: {
 				type: parsed.projectType,
@@ -345,8 +348,7 @@ async function main() {
 			cwd: process.cwd(),
 			remote: "origin",
 			projectType: parsed.projectType,
-			manifestPath: parsed.manifestPath,
-			llmClient
+			manifestPath: parsed.manifestPath
 		})
 		markdown = ""
 		// eslint-disable-next-line no-console

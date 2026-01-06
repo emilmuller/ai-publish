@@ -70,7 +70,7 @@ export type PrepublishResult = {
 	manifestUpdated: boolean
 	changelogPath: string
 	releaseNotesPath: string
-	commitSha: string
+	prepublishStatePath: string
 	llm: "azure" | "openai"
 }
 

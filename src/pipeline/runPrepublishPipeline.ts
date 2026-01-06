@@ -15,7 +15,7 @@ import {
 	updateNpmPackageJsonVersion,
 	updatePyProjectTomlVersion
 } from "../version/manifests"
-import { assertCleanWorktree, createAnnotatedTag, createReleaseCommit, tagExists } from "../git/release"
+import { assertCleanWorktree, tagExists } from "../git/release"
 import { buildReleaseTagMessage } from "../changelog/tagSummary"
 
 function debugEnabled(): boolean {
@@ -70,7 +70,7 @@ export async function runPrepublishPipeline(params: {
 	manifestUpdated: boolean
 	changelogPath: string
 	releaseNotesPath: string
-	commitSha: string
+	prepublishStatePath: string
 }> {
 	const cwd = params.cwd ?? process.cwd()
 	debugLog("prepublishPipeline", { cwd })
@@ -115,7 +115,7 @@ export async function runPrepublishPipeline(params: {
 	debugLog("prepublishPipeline:computedVersion", { bumpType, nextVersion })
 
 	if (bumpType === "none") {
-		throw new Error("No user-facing changes detected (bumpType=none). Refusing to create a release commit/tag.")
+		throw new Error("No user-facing changes detected (bumpType=none). Refusing to prepare a release.")
 	}
 	assertVersionIncreases(resolvedBase.previousVersion, nextVersion)
 
@@ -207,13 +207,33 @@ export async function runPrepublishPipeline(params: {
 	const pathsToCommit = [relChangelogPath, releaseNotesRelPath]
 	if (shouldWriteManifest) pathsToCommit.push(relManifestPath)
 
-	// Create release commit, then annotated tag.
-	const commitMessage = `chore(release): ${predictedTag}`
-	const { commitSha } = await createReleaseCommit({ cwd, paths: pathsToCommit, message: commitMessage })
-	debugLog("prepublishPipeline:commit", commitSha)
+	// Persist release intent so `postpublish` can publish, then create the release commit + tag.
 	const tagMessage = buildReleaseTagMessage({ tag: predictedTag, bumpType, model: changelogGenerated.model })
-	await createAnnotatedTag({ cwd, tag: predictedTag, message: tagMessage })
-	debugLog("prepublishPipeline:tagged", predictedTag)
+	const prepublishStateRelPath = toGitPath(join(".ai-publish", "prepublish.json"))
+	const absPrepublishStatePath = resolve(cwd, prepublishStateRelPath)
+	await mkdir(dirname(absPrepublishStatePath), { recursive: true })
+	await writeFileAtomic(
+		absPrepublishStatePath,
+		JSON.stringify(
+			{
+				predictedTag,
+				nextVersion: expectedNext,
+				bumpType,
+				previousVersion: resolvedBase.previousVersion,
+				previousTag: resolvedBase.previousTag,
+				manifestType,
+				manifestPath: relManifestPath,
+				changelogPath: changelogOutPath,
+				releaseNotesPath: releaseNotesRelPath,
+				pathsToCommit,
+				commitMessage: `chore(release): ${predictedTag}`,
+				tagMessage
+			},
+			null,
+			2
+		) + "\n"
+	)
+	debugLog("prepublishPipeline:wrote", prepublishStateRelPath)
 
 	return {
 		previousVersion: resolvedBase.previousVersion,
@@ -227,6 +247,6 @@ export async function runPrepublishPipeline(params: {
 		manifestUpdated,
 		changelogPath: absChangelogPath,
 		releaseNotesPath: absReleaseNotesPath,
-		commitSha
+		prepublishStatePath: absPrepublishStatePath
 	}
 }

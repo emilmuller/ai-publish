@@ -7,7 +7,7 @@ import { makeDeterministicTestLLMClient } from "./deterministicTestLLMClient"
 import { runPrepublishPipeline } from "../src/pipeline/runPrepublishPipeline"
 
 describe("prepublish pipeline", () => {
-	test("creates release commit + annotated tag and writes outputs", async () => {
+	test("writes outputs and bumps manifest version (no commit/tag)", async () => {
 		const { dir } = await makeTempGitRepo()
 
 		// Establish a previous version tag commit with a package.json.
@@ -23,6 +23,7 @@ describe("prepublish pipeline", () => {
 
 		// Make a user-visible change after the tag (patch bump).
 		await commitChange(dir, "config.yml", "name: changed\n", "change config")
+		const headBefore = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
 
 		const res = await runPrepublishPipeline({
 			cwd: dir,
@@ -32,18 +33,13 @@ describe("prepublish pipeline", () => {
 		expect(res.predictedTag).toBe("v1.2.4")
 		expect(res.bumpType).toBe("patch")
 
-		const headSha = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
-		expect(headSha).toBe(res.commitSha)
+		const headAfter = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		expect(headAfter).toBe(headBefore)
 
-		// Tag should be annotated and point at the release commit.
-		const tagType = (await runGitOrThrow(["cat-file", "-t", res.predictedTag], { cwd: dir })).trim()
-		expect(tagType).toBe("tag")
-		const tagTarget = (await runGitOrThrow(["rev-list", "-n", "1", res.predictedTag], { cwd: dir })).trim()
-		expect(tagTarget).toBe(res.commitSha)
-
-		const tagBody = await runGitOrThrow(["cat-file", "-p", res.predictedTag], { cwd: dir })
-		expect(tagBody).toMatch(/Release v1\.2\.4/)
-		expect(tagBody).toMatch(/\[Changed\]/)
+		// Tag should NOT exist yet.
+		await expect(
+			runGitOrThrow(["rev-parse", "-q", "--verify", "refs/tags/v1.2.4"], { cwd: dir })
+		).rejects.toBeDefined()
 
 		// package.json should be updated.
 		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any

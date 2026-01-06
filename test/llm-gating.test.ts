@@ -365,9 +365,12 @@ describe("LLM tool-gating", () => {
 			}
 		}
 
-		await expect(runChangelogPipeline({ base, cwd: dir, llmClient: client })).rejects.toThrow(
-			/maxTotalBytes|budget/i
-		)
+		// The pipeline enforces a global hunk budget by skipping/clamping retrievals
+		// once the budget is exhausted, rather than failing the entire run.
+		const res = await runChangelogPipeline({ base, cwd: dir, llmClient: client })
+		for (let i = 0; i < 6; i++) {
+			expect(res.markdown).toContain(`- Added f${i}.txt.`)
+		}
 	})
 
 	test("LLM output is validated and evidence is injected", async () => {
