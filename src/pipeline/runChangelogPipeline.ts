@@ -334,6 +334,83 @@ export async function runChangelogPipeline(params: {
 		internalTooling: repairBullets(editorial.internalTooling)
 	}
 
+	function referencedEvidenceNodeIds(model: Pick<ChangelogModel, keyof Omit<ChangelogModel, "evidence">>): Set<string> {
+		const ids = new Set<string>()
+		for (const b of model.breakingChanges) for (const id of b.evidenceNodeIds) ids.add(id)
+		for (const b of model.added) for (const id of b.evidenceNodeIds) ids.add(id)
+		for (const b of model.changed) for (const id of b.evidenceNodeIds) ids.add(id)
+		for (const b of model.fixed) for (const id of b.evidenceNodeIds) ids.add(id)
+		for (const b of model.removed) for (const id of b.evidenceNodeIds) ids.add(id)
+		for (const b of model.internalTooling) for (const id of b.evidenceNodeIds) ids.add(id)
+		return ids
+	}
+
+	function isInternalSurface(surface: string): boolean {
+		return surface === "internal" || surface === "tests" || surface === "infra"
+	}
+
+	function sectionForAutoBullet(node: { surface: string; changeType: string }):
+		| "added"
+		| "changed"
+		| "removed"
+		| "internalTooling" {
+		if (isInternalSurface(node.surface)) return "internalTooling"
+		if (node.changeType === "add") return "added"
+		if (node.changeType === "delete") return "removed"
+		return "changed"
+	}
+
+	function autoBulletText(node: {
+		filePath: string
+		oldPath?: string
+		changeType: string
+		isBinary: boolean
+	}): string {
+		const fp = node.filePath
+		const op = node.oldPath
+		const binaryPrefix = node.isBinary ? "binary file " : ""
+		switch (node.changeType) {
+			case "add":
+				return `Added ${binaryPrefix}${fp}.`
+			case "delete":
+				return `Removed ${binaryPrefix}${fp}.`
+			case "rename":
+				return op ? `Renamed ${binaryPrefix}${op} to ${fp}.` : `Renamed ${binaryPrefix}${fp}.`
+			case "copy":
+				return op ? `Copied ${binaryPrefix}${op} to ${fp}.` : `Copied ${binaryPrefix}${fp}.`
+			default:
+				return `Updated ${binaryPrefix}${fp}.`
+		}
+	}
+
+	// Coverage guardrail: ensure every evidence node is referenced by at least one bullet.
+	// This enforces the user's expectation: changelog covers the entire base..HEAD diff.
+	const referenced = referencedEvidenceNodeIds(repairedEditorial)
+	const missingNodes = Object.values(evidence)
+		.filter((n) => !referenced.has(n.id))
+		.sort((a, b) => {
+			return (
+				surfaceRank(a.surface) - surfaceRank(b.surface) ||
+				compareStrings(a.filePath, b.filePath) ||
+				compareStrings(a.id, b.id)
+			)
+		})
+	if (missingNodes.length && debugEnabled()) {
+		debugLog("changelogPipeline:coverage:missingEvidenceNodes", {
+			count: missingNodes.length,
+			sample: missingNodes.slice(0, 5).map((n) => ({ id: n.id, filePath: n.filePath, surface: n.surface }))
+		})
+	}
+	for (const node of missingNodes) {
+		const section = sectionForAutoBullet(node)
+		const text = autoBulletText(node)
+		const bullet = { text, evidenceNodeIds: [node.id] }
+		if (section === "added") repairedEditorial.added.push(bullet)
+		else if (section === "removed") repairedEditorial.removed.push(bullet)
+		else if (section === "internalTooling") repairedEditorial.internalTooling.push(bullet)
+		else repairedEditorial.changed.push(bullet)
+	}
+
 	// Inject evidence deterministically and stabilize ordering.
 	const stabilized: ChangelogModel = {
 		...repairedEditorial,
