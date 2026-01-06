@@ -334,7 +334,9 @@ export async function runChangelogPipeline(params: {
 		internalTooling: repairBullets(editorial.internalTooling)
 	}
 
-	function referencedEvidenceNodeIds(model: Pick<ChangelogModel, keyof Omit<ChangelogModel, "evidence">>): Set<string> {
+	function referencedEvidenceNodeIds(
+		model: Pick<ChangelogModel, keyof Omit<ChangelogModel, "evidence">>
+	): Set<string> {
 		const ids = new Set<string>()
 		for (const b of model.breakingChanges) for (const id of b.evidenceNodeIds) ids.add(id)
 		for (const b of model.added) for (const id of b.evidenceNodeIds) ids.add(id)
@@ -349,11 +351,10 @@ export async function runChangelogPipeline(params: {
 		return surface === "internal" || surface === "tests" || surface === "infra"
 	}
 
-	function sectionForAutoBullet(node: { surface: string; changeType: string }):
-		| "added"
-		| "changed"
-		| "removed"
-		| "internalTooling" {
+	function sectionForAutoBullet(node: {
+		surface: string
+		changeType: string
+	}): "added" | "changed" | "removed" | "internalTooling" {
 		if (isInternalSurface(node.surface)) return "internalTooling"
 		if (node.changeType === "add") return "added"
 		if (node.changeType === "delete") return "removed"
