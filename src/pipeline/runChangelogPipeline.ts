@@ -40,6 +40,11 @@ export async function runChangelogPipeline(params: {
 	const cwd = params.cwd ?? process.cwd()
 	debugLog("changelogPipeline", { base: params.base, cwd })
 
+	function isMaxTotalBytesExceededError(err: unknown): boolean {
+		const msg = (err as any)?.message
+		return typeof msg === "string" && msg.includes("Requested hunks exceed maxTotalBytes")
+	}
+
 	// Always build the diff index first; it is the queryable authority.
 	debugLog("changelogPipeline:indexDiff")
 	const indexRes = await indexDiff({ base: params.base, cwd })
@@ -105,15 +110,51 @@ export async function runChangelogPipeline(params: {
 				const allowed = hunkIds.filter((id) => allowedHunkIds.has(id))
 				if (!allowed.length) return []
 				if (remainingBytes <= 0) throw new Error("LLM hunk budget exhausted")
-				const hunks = await getDiffHunks({
-					base: params.base,
-					hunkIds: allowed,
-					cwd,
-					maxTotalBytes: remainingBytes
-				})
-				const used = hunks.reduce((sum: number, h: DiffHunk) => sum + (h.byteLength ?? 0), 0)
-				remainingBytes -= used
-				return hunks
+
+				// The model may over-request hunks. Enforce the global budget by
+				// deterministically downsizing/chunking requests instead of failing the run.
+				const collected: DiffHunk[] = []
+				let cursor = 0
+
+				while (cursor < allowed.length) {
+					if (remainingBytes <= 0) break
+					let chunkSize = Math.min(12, allowed.length - cursor)
+
+					while (chunkSize > 0) {
+						const chunkIds = allowed.slice(cursor, cursor + chunkSize)
+						try {
+							const hunks = await getDiffHunks({
+								base: params.base,
+								hunkIds: chunkIds,
+								cwd,
+								maxTotalBytes: remainingBytes
+							})
+							collected.push(...hunks)
+							const used = hunks.reduce((sum: number, h: DiffHunk) => sum + (h.byteLength ?? 0), 0)
+							remainingBytes -= used
+							cursor += chunkSize
+							break
+						} catch (err) {
+							if (isMaxTotalBytesExceededError(err)) {
+								// Reduce chunk size until it fits the remaining budget.
+								if (chunkSize === 1) {
+									// Should be rare (our per-hunk storage is bounded), but don't fail the run.
+									debugLog("changelogPipeline:semantic:hunkBudgetSkip", {
+										id: chunkIds[0],
+										remainingBytes
+									})
+									cursor += 1
+									break
+								}
+								chunkSize = Math.max(1, Math.floor(chunkSize / 2))
+								continue
+							}
+							throw err
+						}
+					}
+				}
+
+				return collected
 			},
 			getRepoFileSnippets: async (requests) => {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
