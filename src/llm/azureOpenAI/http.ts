@@ -64,6 +64,15 @@ async function azureResponsesCompletion(
 	const url = `${cfg.endpoint}/openai/v1/responses`
 	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
 
+	const systemInstructions = params.messages
+		.filter((m) => m.role === "system")
+		.map((m) => m.content)
+		.filter(Boolean)
+		.join("\n\n")
+	const inputMessages = params.messages
+		.filter((m) => m.role !== "system")
+		.map((m) => ({ role: m.role, content: m.content }))
+
 	const res = await fetchWithTimeout(
 		url,
 		{
@@ -74,7 +83,8 @@ async function azureResponsesCompletion(
 			},
 			body: JSON.stringify({
 				model: cfg.deployment,
-				input: params.messages.map((m) => ({ role: m.role, content: m.content })),
+				...(systemInstructions ? { instructions: systemInstructions } : {}),
+				input: inputMessages,
 				temperature: params.temperature ?? 0,
 				max_output_tokens: maxTokens,
 				...(params.responseFormat ? { response_format: params.responseFormat } : {})
@@ -90,6 +100,14 @@ async function azureResponsesCompletion(
 	}
 
 	const json = (await res.json()) as any
+	if (debugEnabled()) {
+		debugLog("azureResponsesCompletion:ok", {
+			model: json?.model,
+			status: json?.status,
+			outputTokens: json?.usage?.output_tokens,
+			reasoningTokens: json?.usage?.output_tokens_details?.reasoning_tokens
+		})
+	}
 	const text = parseResponsesOutputText(json)
 	if (typeof text !== "string" || !text.trim()) {
 		if (debugEnabled()) {
