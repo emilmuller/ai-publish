@@ -1,0 +1,27 @@
+# Changelog (4b825dc642cb6eb9a060e54bf8d69288fbee4904..v0.1.0)
+
+- Exposed a typed public API surface for diff utilities, changelog generation, instruction resolution, pipelines, version helpers, and LLM client factories.
+- Introduced the `ai-publish` CLI for running changelog, release notes, version bump, and publish-related flows from the command line.
+- Added comprehensive unit and integration test suites for CLI flows, pipelines, manifests, repo helpers, and LLM behavior.
+- Documented project purpose, agents, and usage via README and AGENTS guides, and set up basic gitignore rules.
+- Initialized the `ai-publish` Node.js/TypeScript package with CLI entrypoint, CommonJS build, and npm metadata wired to `dist` outputs.
+- Implemented changelog support including breaking-change detection, evidence tracking, tag summaries, prepending, and validation.
+- Added instruction resolution and file classification modules to drive agent behavior and changelog/category decisions.
+- Added git diff indexing and summary utilities, including unified diff indexing, hunk extraction, and type-safe diff models.
+- Added language-specific runners for npm, Python, .NET, and Rust tooling to support automated build and publish pipelines.
+- Implemented LLM integration layer with OpenAI and Azure OpenAI clients, shared schemas, deterministic facts, and HTTP plumbing.
+- Introduced repository querying helpers to list files, fetch metadata and snippets, and search paths and text for use in LLM pipelines.
+- Implemented multi-language version manifest detection and semver bumping for npm, Python, .NET, Go, and Rust projects.
+- Added VS Code task for running the TypeScript build via `npm run build`.
+- Set up TypeScript build and dev configs, including a no-emit dev tsconfig and an emit-enabled build tsconfig targeting ES2022 and CJS.
+- Configured Vitest and supporting utilities for running unit, integration, and LLM-focused test suites.
+- Added test/getDiffHunks-validation.test.ts.
+- Added test/integration-changelog-azure-breaking-via-context.test.ts.
+- Added src/changelog/types.ts.
+- Added src/diff/index.ts.
+- Implemented shared filesystem, hashing, comparison, and git utilities used across pipelines and repo helpers.
+- Added src/instructions/resolveInstructions.ts.
+- Added src/pipeline/index.ts.
+- Added src/pipeline/runPostpublishPipeline.ts.
+- Added src/programmatic.ts.
+- Added src/repo/types.ts.
