@@ -54,7 +54,12 @@ async function defaultPublishRunner(params: {
 	manifestPath?: string
 }): Promise<void> {
 	if (params.projectType === "npm") {
-		await runNpmOrThrow(["publish"], { cwd: params.cwd })
+		// npm accounts with 2FA enabled may require an OTP for `npm publish`.
+		// Support providing it via env var so callers can run postpublish non-interactively.
+		const otp = process.env.AI_PUBLISH_NPM_OTP
+		const args = otp ? ["publish", `--otp=${otp}`] : ["publish"]
+		// Use interactive mode so npm behaves like running it manually (prompts, browser flows).
+		await runNpmOrThrow(args, { cwd: params.cwd, stdio: "inherit" })
 		return
 	}
 	if (params.projectType === "dotnet") {

@@ -3,13 +3,19 @@ import { spawn } from "node:child_process"
 export type RunNpmOptions = {
 	cwd?: string
 	maxStderrBytes?: number
+	/**
+	 * When set to "inherit", runs npm attached to the current terminal.
+	 * This allows interactive prompts (e.g. OTP) and any browser-based flows
+	 * npm may trigger.
+	 */
+	stdio?: "capture" | "inherit"
 }
 
 export async function runNpmCapture(
 	args: string[],
 	options: RunNpmOptions = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const { cwd, maxStderrBytes = 128 * 1024 } = options
+	const { cwd, maxStderrBytes = 128 * 1024, stdio = "capture" } = options
 	// Windows note:
 	// On some newer Node.js versions (observed on Node v25.x), spawning `npm.cmd`
 	// directly can fail with `spawn EINVAL`. Running npm through `cmd.exe /c` is
@@ -21,26 +27,28 @@ export async function runNpmCapture(
 	return await new Promise((resolve, reject) => {
 		const child = spawn(command, commandArgs, {
 			cwd,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: stdio === "inherit" ? "inherit" : ["ignore", "pipe", "pipe"],
 			windowsHide: true
 		})
 
 		let stdout = ""
 		let stderr = ""
 
-		child.stdout!.setEncoding("utf8")
-		child.stderr!.setEncoding("utf8")
+		if (stdio !== "inherit") {
+			child.stdout!.setEncoding("utf8")
+			child.stderr!.setEncoding("utf8")
 
-		child.stdout!.on("data", (chunk: string) => {
-			stdout += chunk
-		})
+			child.stdout!.on("data", (chunk: string) => {
+				stdout += chunk
+			})
 
-		child.stderr!.on("data", (chunk: string) => {
-			if (stderr.length < maxStderrBytes) {
-				const remaining = maxStderrBytes - stderr.length
-				stderr += chunk.slice(0, remaining)
-			}
-		})
+			child.stderr!.on("data", (chunk: string) => {
+				if (stderr.length < maxStderrBytes) {
+					const remaining = maxStderrBytes - stderr.length
+					stderr += chunk.slice(0, remaining)
+				}
+			})
+		}
 
 		child.on("error", reject)
 
