@@ -27,6 +27,89 @@ function maxTokensFromEnv(): number | undefined {
 	return Math.max(MIN, Math.min(MAX, Math.trunc(n)))
 }
 
+function useResponsesApiFromEnv(): boolean {
+	const raw = process.env.AZURE_OPENAI_USE_RESPONSES
+	if (!raw) return false
+	return raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes"
+}
+
+function parseResponsesOutputText(json: any): string {
+	if (typeof json?.output_text === "string" && json.output_text.trim()) return json.output_text
+
+	// Fallback: derive from output message(s)
+	const out = json?.output
+	if (!Array.isArray(out)) return ""
+	const parts: string[] = []
+	for (const item of out) {
+		const content = item?.content
+		if (!Array.isArray(content)) continue
+		for (const c of content) {
+			if (c && typeof c.text === "string") parts.push(c.text)
+		}
+	}
+	return parts.join("")
+}
+
+async function azureResponsesCompletion(
+	cfg: AzureOpenAIConfig,
+	params: {
+		messages: ChatMessage[]
+		temperature?: number
+		maxTokens?: number
+		responseFormat?: any
+	}
+): Promise<string> {
+	// Azure OpenAI v1 Responses API:
+	// POST {endpoint}/openai/v1/responses
+	const url = `${cfg.endpoint}/openai/v1/responses`
+	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
+
+	const res = await fetchWithTimeout(
+		url,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"api-key": cfg.apiKey
+			},
+			body: JSON.stringify({
+				model: cfg.deployment,
+				input: params.messages.map((m) => ({ role: m.role, content: m.content })),
+				temperature: params.temperature ?? 0,
+				max_output_tokens: maxTokens,
+				...(params.responseFormat ? { response_format: params.responseFormat } : {})
+			})
+		},
+		cfg.requestTimeoutMs
+	)
+
+	if (!res.ok) {
+		const text = await res.text().catch(() => "")
+		const msg = text || res.statusText
+		throw new Error(`Azure OpenAI responses request failed (${res.status}): ${msg}`)
+	}
+
+	const json = (await res.json()) as any
+	const text = parseResponsesOutputText(json)
+	if (typeof text !== "string" || !text.trim()) {
+		if (debugEnabled()) {
+			debugLog("azureResponsesCompletion:missingOutputText", {
+				status: res.status,
+				model: json?.model,
+				statusText: json?.status
+			})
+			try {
+				debugLog("azureResponsesCompletion:responseSnippet", JSON.stringify(json).slice(0, 2000))
+			} catch {
+				// ignore
+			}
+		}
+		throw new Error("Azure OpenAI responses response missing output_text")
+	}
+
+	return text
+}
+
 function getRetryAfterMs(res: Response): number | null {
 	const raw = res.headers.get("retry-after")
 	if (!raw) return null
@@ -60,6 +143,10 @@ async function azureChatCompletionInner(
 	},
 	allowNoFormatRetry: boolean
 ): Promise<string> {
+	if (useResponsesApiFromEnv()) {
+		return await azureResponsesCompletion(cfg, params)
+	}
+
 	// Azure OpenAI (data-plane) Chat Completions:
 	// POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...
 	const url = `${cfg.endpoint}/openai/deployments/${encodeURIComponent(
@@ -192,6 +279,15 @@ async function azureChatCompletionInner(
 			debugLog("azureChatCompletion:retryWithoutResponseFormat")
 			return await azureChatCompletionInner(cfg, { ...params, responseFormat: undefined }, false)
 		}
+
+		// GPT-5.x deployments can behave poorly on chat-completions (empty content + reasoning only).
+		// As a best-effort fallback, try the v1 Responses API once.
+		const model = typeof json?.model === "string" ? json.model : ""
+		if (model.startsWith("gpt-5") || model.startsWith("gpt-5.")) {
+			debugLog("azureChatCompletion:fallbackToResponses", { model })
+			return await azureResponsesCompletion(cfg, params)
+		}
+
 		const finish = typeof choice?.finish_reason === "string" ? ` (finish_reason=${choice.finish_reason})` : ""
 		throw new Error(`Azure OpenAI response missing message content${finish}`)
 	}
