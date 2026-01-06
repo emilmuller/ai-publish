@@ -18,6 +18,16 @@ import {
 import { assertCleanWorktree, createAnnotatedTag, createReleaseCommit, tagExists } from "../git/release"
 import { buildReleaseTagMessage } from "../changelog/tagSummary"
 
+function debugEnabled(): boolean {
+	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
+}
+
+function debugLog(...args: any[]) {
+	if (!debugEnabled()) return
+	// eslint-disable-next-line no-console
+	console.error("[ai-publish][debug]", ...args)
+}
+
 function toGitPath(pathFromCwd: string): string {
 	return pathFromCwd.replace(/\\/g, "/")
 }
@@ -63,15 +73,24 @@ export async function runPrepublishPipeline(params: {
 	commitSha: string
 }> {
 	const cwd = params.cwd ?? process.cwd()
+	debugLog("prepublishPipeline", { cwd })
 
+	debugLog("prepublishPipeline:assertCleanWorktree")
 	await assertCleanWorktree({ cwd })
+	debugLog("prepublishPipeline:clean")
 
 	const headTagged = await resolveHeadVersionTagFromGitTags({ cwd })
+	debugLog("prepublishPipeline:headTag", headTagged.headTag ?? null)
 	if (headTagged.headTag) {
 		throw new Error(`HEAD is already tagged with ${headTagged.headTag}. Refusing to prepublish twice.`)
 	}
 
 	const resolvedBase = await resolveVersionBaseFromGitTags({ cwd })
+	debugLog("prepublishPipeline:base", {
+		base: resolvedBase.base,
+		previousTag: resolvedBase.previousTag,
+		previousVersion: resolvedBase.previousVersion
+	})
 	const base = resolvedBase.base
 	const baseLabel = resolvedBase.previousTag ?? resolvedBase.base
 
@@ -83,8 +102,17 @@ export async function runPrepublishPipeline(params: {
 		cwd,
 		llmClient: params.llmClient
 	})
+	debugLog("prepublishPipeline:changelogModel", {
+		breaking: changelogGenerated.model.breakingChanges.length,
+		added: changelogGenerated.model.added.length,
+		changed: changelogGenerated.model.changed.length,
+		fixed: changelogGenerated.model.fixed.length,
+		removed: changelogGenerated.model.removed.length,
+		internal: changelogGenerated.model.internalTooling.length
+	})
 	const bumpType = computeBumpTypeFromChangelogModel(changelogGenerated.model)
 	const nextVersion = computeNextVersion({ previousVersion: resolvedBase.previousVersion, bumpType })
+	debugLog("prepublishPipeline:computedVersion", { bumpType, nextVersion })
 
 	if (bumpType === "none") {
 		throw new Error("No user-facing changes detected (bumpType=none). Refusing to create a release commit/tag.")
@@ -92,6 +120,7 @@ export async function runPrepublishPipeline(params: {
 	assertVersionIncreases(resolvedBase.previousVersion, nextVersion)
 
 	const predictedTag = `v${nextVersion}`
+	debugLog("prepublishPipeline:predictedTag", predictedTag)
 	if (await tagExists({ cwd, tag: predictedTag })) {
 		throw new Error(`Tag already exists: ${predictedTag}`)
 	}
@@ -103,6 +132,7 @@ export async function runPrepublishPipeline(params: {
 		nextVersion,
 		changelogModel: changelogGenerated.model
 	})
+	debugLog("prepublishPipeline:llmVersionBump", { nextVersion: llmOut.nextVersion })
 	const llmNext = semver.valid(llmOut.nextVersion)
 	const expectedNext = semver.valid(nextVersion)
 	if (!llmNext) throw new Error(`LLM produced invalid nextVersion (not semver): ${llmOut.nextVersion}`)
@@ -121,6 +151,7 @@ export async function runPrepublishPipeline(params: {
 		cwd,
 		llmClient: params.llmClient
 	})
+	debugLog("prepublishPipeline:releaseNotesBytes", releaseNotesGenerated.markdown.length)
 
 	// Prepare output paths.
 	const changelogOutPath = params.changelogOutPath ?? "CHANGELOG.md"
@@ -166,10 +197,12 @@ export async function runPrepublishPipeline(params: {
 	// Write changelog (overwrite).
 	const patchedChangelogMarkdown = patchChangelogHeaderRange(changelogGenerated.markdown, predictedTag)
 	await writeFileAtomic(absChangelogPath, patchedChangelogMarkdown)
+	debugLog("prepublishPipeline:wrote", changelogOutPath)
 
 	// Write release notes.
 	await mkdir(dirname(absReleaseNotesPath), { recursive: true })
 	await writeFile(absReleaseNotesPath, releaseNotesGenerated.markdown, "utf8")
+	debugLog("prepublishPipeline:wrote", releaseNotesRelPath)
 
 	const pathsToCommit = [relChangelogPath, releaseNotesRelPath]
 	if (shouldWriteManifest) pathsToCommit.push(relManifestPath)
@@ -177,8 +210,10 @@ export async function runPrepublishPipeline(params: {
 	// Create release commit, then annotated tag.
 	const commitMessage = `chore(release): ${predictedTag}`
 	const { commitSha } = await createReleaseCommit({ cwd, paths: pathsToCommit, message: commitMessage })
+	debugLog("prepublishPipeline:commit", commitSha)
 	const tagMessage = buildReleaseTagMessage({ tag: predictedTag, bumpType, model: changelogGenerated.model })
 	await createAnnotatedTag({ cwd, tag: predictedTag, message: tagMessage })
+	debugLog("prepublishPipeline:tagged", predictedTag)
 
 	return {
 		previousVersion: resolvedBase.previousVersion,

@@ -15,6 +15,16 @@ import { searchRepoPaths } from "../repo/searchRepoPaths"
 import { searchRepoText } from "../repo/searchRepoText"
 import { listRepoFiles } from "../repo/listRepoFiles"
 
+function debugEnabled(): boolean {
+	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
+}
+
+function debugLog(...args: any[]) {
+	if (!debugEnabled()) return
+	// eslint-disable-next-line no-console
+	console.error("[ai-publish][debug]", ...args)
+}
+
 // NOTE: ai-publish is LLM-driven.
 // This pipeline always requires an injected LLM client (the CLI uses Azure OpenAI).
 // Tests may inject a local stub client to keep CI network-free.
@@ -28,9 +38,16 @@ export async function runChangelogPipeline(params: {
 	llmClient: LLMClient
 }): Promise<{ markdown: string; model: ChangelogModel }> {
 	const cwd = params.cwd ?? process.cwd()
+	debugLog("changelogPipeline", { base: params.base, cwd })
 
 	// Always build the diff index first; it is the queryable authority.
+	debugLog("changelogPipeline:indexDiff")
 	const indexRes = await indexDiff({ base: params.base, cwd })
+	debugLog("changelogPipeline:indexed", {
+		baseSha: indexRes.baseSha,
+		headSha: indexRes.headSha,
+		files: indexRes.summary.files.length
+	})
 
 	// LLM mode (scaffold): follow the 3-pass contract and tool-gating.
 	// Reuse the indexed diff summary to keep totals consistent and avoid redundant git calls.
@@ -50,6 +67,7 @@ export async function runChangelogPipeline(params: {
 		resolvedInstructions,
 		deterministicFacts
 	})
+	debugLog("changelogPipeline:pass1", { notes: mechanical.notes.length })
 
 	const DEFAULT_GLOBAL_HUNK_BUDGET_BYTES = 256 * 1024
 	let remainingBytes = DEFAULT_GLOBAL_HUNK_BUDGET_BYTES
@@ -192,8 +210,10 @@ export async function runChangelogPipeline(params: {
 			}
 		}
 	)
+	debugLog("changelogPipeline:pass2", { notes: semantic.notes.length })
 
 	const editorial = await params.llmClient.pass3Editorial({ mechanical, semantic, evidence, resolvedInstructions })
+	debugLog("changelogPipeline:pass3")
 
 	function repairBulletEvidenceIds(text: string, ids: string[]): string[] {
 		const known = ids

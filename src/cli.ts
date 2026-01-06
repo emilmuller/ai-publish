@@ -51,14 +51,15 @@ type ParsedArgs =
 export function formatUsage(): string {
 	return [
 		"Usage:",
-		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai>",
-		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai>",
-		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--no-write] [--out <path>] --llm <azure|openai>",
-		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] --llm <azure|openai>",
+		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--no-write] [--out <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish --help",
 		"",
 		"Notes:",
 		"  - LLM mode is required; use --llm azure or --llm openai.",
+		"  - --debug enables verbose stderr diagnostics.",
 		"  - If --base is omitted, the tool diffs from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
 		"  - Unknown flags are rejected."
 	].join("\n")
@@ -70,19 +71,33 @@ function usage(exitCode: number): never {
 	process.exit(exitCode)
 }
 
+function debugEnabledFromEnv(): boolean {
+	return process.env.AI_PUBLISH_DEBUG_CLI === "1" || process.env.AI_PUBLISH_DEBUG === "1"
+}
+
+function debugLog(...args: any[]) {
+	if (!debugEnabledFromEnv()) return
+	// eslint-disable-next-line no-console
+	console.error("[ai-publish][debug]", ...args)
+}
+
 function takeValue(args: string[], i: number, flag: string): string {
 	const v = args[i + 1]
 	if (!v || v.startsWith("--")) {
 		throw new Error(`Missing value for ${flag}`)
 	}
 	return v
-	const envDebug = debugEnabledFromEnv()
-	debugLog(envDebug, "argv", process.argv)
-	debugLog(
-		envDebug,
-		"require.main===module",
-		typeof require !== "undefined" ? require.main === module : "(no require)"
-	)
+}
+
+function isProjectType(v: string): v is "npm" | "dotnet" | "rust" | "python" | "go" {
+	return v === "npm" || v === "dotnet" || v === "rust" || v === "python" || v === "go"
+}
+
+function isLLMProvider(v: string): v is "azure" | "openai" {
+	return v === "azure" || v === "openai"
+}
+
+export function parseCliArgs(argv: string[]): ParsedArgs {
 	const args = [...argv]
 
 	if (args.length === 0) return { command: "help" }
@@ -115,6 +130,9 @@ function takeValue(args: string[], i: number, flag: string): string {
 		if (!token.startsWith("--")) {
 			throw new Error(`Unexpected argument: ${token}`)
 		}
+
+		// Debug is handled by main() (env + stderr logging). Parse accepts it so it's not rejected.
+		if (token === "--debug") continue
 
 		if (seenFlags.has(token)) {
 			throw new Error(`Duplicate flag: ${token}`)
@@ -151,9 +169,7 @@ function takeValue(args: string[], i: number, flag: string): string {
 					throw new Error("--project-type is only supported for prepublish and postpublish")
 				}
 				const v = takeValue(args, i, token)
-				if (v !== "npm" && v !== "dotnet" && v !== "rust" && v !== "python" && v !== "go") {
-					throw new Error(`Unsupported project type: ${v}`)
-				}
+				if (!isProjectType(v)) throw new Error(`Unsupported project type: ${v}`)
 				projectType = v
 				i += 1
 				break
@@ -175,7 +191,7 @@ function takeValue(args: string[], i: number, flag: string): string {
 			}
 			case "--llm": {
 				const v = takeValue(args, i, token)
-				if (v !== "azure" && v !== "openai") throw new Error(`Unsupported LLM provider: ${v}`)
+				if (!isLLMProvider(v)) throw new Error(`Unsupported LLM provider: ${v}`)
 				llm = v
 				i += 1
 				break
@@ -206,17 +222,18 @@ function takeValue(args: string[], i: number, flag: string): string {
 }
 
 async function main() {
+	const rawArgv = process.argv.slice(2)
+	const debug = debugEnabledFromEnv() || rawArgv.includes("--debug")
+	if (debug && process.env.AI_PUBLISH_DEBUG_CLI !== "1") process.env.AI_PUBLISH_DEBUG_CLI = "1"
+	debugLog("argv", rawArgv)
+
 	let parsed: ParsedArgs
 	try {
-		parsed = parseCliArgs(process.argv.slice(2))
+		parsed = parseCliArgs(rawArgv)
 	} catch (err: any) {
 		// eslint-disable-next-line no-console
-		const debug = !!(parsed as any).debug || envDebug
-		// If --debug is set, enable deep debug logs throughout the process.
-		if (debug && process.env.AI_PUBLISH_DEBUG_CLI !== "1") {
-			process.env.AI_PUBLISH_DEBUG_CLI = "1"
-		}
 		console.error(err?.message ?? String(err))
+		if (debug && err?.stack) console.error(err.stack)
 		usage(2)
 	}
 
