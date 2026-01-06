@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.ai-publish/
+*.log
+
+# Never commit generated test outputs
+test/**/*.js
+test/**/*.d.ts
+test/**/*.map
