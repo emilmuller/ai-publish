@@ -39,14 +39,15 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 	}
 }
 
-export async function azureChatCompletion(
+async function azureChatCompletionInner(
 	cfg: AzureOpenAIConfig,
 	params: {
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
 		responseFormat?: any
-	}
+	},
+	allowNoFormatRetry: boolean
 ): Promise<string> {
 	// Azure OpenAI (data-plane) Chat Completions:
 	// POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...
@@ -69,10 +70,12 @@ export async function azureChatCompletion(
 		)
 	}
 
-	const baseBody = {
-		messages: params.messages,
-		temperature: params.temperature ?? 0,
-		...(params.responseFormat ? { response_format: params.responseFormat } : {})
+	function makeBaseBody(withFormat: boolean): any {
+		return {
+			messages: params.messages,
+			temperature: params.temperature ?? 0,
+			...(withFormat && params.responseFormat ? { response_format: params.responseFormat } : {})
+		}
 	}
 
 	// Some Azure deployments (notably newer reasoning models) reject `max_tokens` in favor of
@@ -81,20 +84,21 @@ export async function azureChatCompletion(
 	let tokenField: "max_completion_tokens" | "max_tokens" = "max_completion_tokens"
 	const maxTokens = params.maxTokens ?? 1200
 
-	function makeBody(): any {
+	function makeBody(withFormat: boolean): any {
+		const baseBody = makeBaseBody(withFormat)
 		return tokenField === "max_completion_tokens"
 			? { ...baseBody, max_completion_tokens: maxTokens }
 			: { ...baseBody, max_tokens: maxTokens }
 	}
 
-	async function requestOnce(): Promise<Response> {
-		return await postJson(makeBody())
+	async function requestOnce(withFormat: boolean): Promise<Response> {
+		return await postJson(makeBody(withFormat))
 	}
 
 	// First request (no backoff); if it fails due to token field incompatibility, switch and retry once.
 	let res: Response
 	try {
-		res = await requestOnce()
+		res = await requestOnce(true)
 	} catch (e) {
 		throw new Error(`Azure OpenAI request failed (network/timeout): ${(e as Error)?.message ?? String(e)}`)
 	}
@@ -106,7 +110,7 @@ export async function azureChatCompletion(
 			res.status === 400 && /max_completion_tokens/i.test(msg) && /unsupported/i.test(msg)
 		if (looksLikeUnsupportedMaxCompletion) {
 			tokenField = "max_tokens"
-			res = await requestOnce()
+			res = await requestOnce(true)
 		}
 	}
 
@@ -121,7 +125,7 @@ export async function azureChatCompletion(
 		await sleep(backoffMs)
 
 		try {
-			res = await requestOnce()
+			res = await requestOnce(true)
 		} catch (e) {
 			if (attempt >= MAX_ATTEMPTS - 1) {
 				throw new Error(`Azure OpenAI request failed (network/timeout): ${(e as Error)?.message ?? String(e)}`)
@@ -173,9 +177,25 @@ export async function azureChatCompletion(
 		if (message?.tool_calls) {
 			throw new Error("Azure OpenAI response requested tool calls (no message content)")
 		}
+		if (allowNoFormatRetry && params.responseFormat) {
+			debugLog("azureChatCompletion:retryWithoutResponseFormat")
+			return await azureChatCompletionInner(cfg, { ...params, responseFormat: undefined }, false)
+		}
 		const finish = typeof choice?.finish_reason === "string" ? ` (finish_reason=${choice.finish_reason})` : ""
 		throw new Error(`Azure OpenAI response missing message content${finish}`)
 	}
 
 	return content
+}
+
+export async function azureChatCompletion(
+	cfg: AzureOpenAIConfig,
+	params: {
+		messages: ChatMessage[]
+		temperature?: number
+		maxTokens?: number
+		responseFormat?: any
+	}
+): Promise<string> {
+	return await azureChatCompletionInner(cfg, params, true)
 }
