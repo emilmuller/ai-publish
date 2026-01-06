@@ -117,29 +117,45 @@ export async function runChangelogPipeline(params: {
 			},
 			getRepoFileSnippets: async (requests) => {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
-				const snippets = await getRepoFileSnippets({
-					cwd,
-					ref: indexRes.headSha,
-					requests,
-					maxTotalBytes: remainingRepoBytes,
-					maxSnippetBytes: 16 * 1024,
-					maxSnippetLines: 200
-				})
+				let snippets: any[] = []
+				try {
+					snippets = await getRepoFileSnippets({
+						cwd,
+						ref: indexRes.headSha,
+						requests,
+						maxTotalBytes: remainingRepoBytes,
+						maxSnippetBytes: 16 * 1024,
+						maxSnippetLines: 200
+					})
+				} catch (e) {
+					debugLog("changelogPipeline:semantic:repoSnippetsFailed", {
+						error: (e as Error)?.message ?? String(e)
+					})
+					return []
+				}
 				const used = snippets.reduce((sum, s) => sum + (s.byteLength ?? 0), 0)
 				remainingRepoBytes -= used
 				return snippets
 			},
 			getRepoSnippetAround: async (requests) => {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
-				const snippets = await getRepoSnippetAround({
-					cwd,
-					ref: indexRes.headSha,
-					requests,
-					maxTotalBytes: remainingRepoBytes,
-					maxSnippetBytes: 16 * 1024,
-					maxSnippetLines: 200,
-					maxContextLines: 80
-				})
+				let snippets: any[] = []
+				try {
+					snippets = await getRepoSnippetAround({
+						cwd,
+						ref: indexRes.headSha,
+						requests,
+						maxTotalBytes: remainingRepoBytes,
+						maxSnippetBytes: 16 * 1024,
+						maxSnippetLines: 200,
+						maxContextLines: 80
+					})
+				} catch (e) {
+					debugLog("changelogPipeline:semantic:repoSnippetAroundFailed", {
+						error: (e as Error)?.message ?? String(e)
+					})
+					return []
+				}
 				const used = snippets.reduce((sum, s) => sum + (s.byteLength ?? 0), 0)
 				remainingRepoBytes -= used
 				return snippets
