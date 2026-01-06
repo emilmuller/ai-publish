@@ -6,6 +6,16 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function debugEnabled(): boolean {
+	return process.env.AI_PUBLISH_DEBUG_CLI === "1" || process.env.AI_PUBLISH_DEBUG === "1"
+}
+
+function debugLog(...args: any[]) {
+	if (!debugEnabled()) return
+	// eslint-disable-next-line no-console
+	console.error("[ai-publish][debug]", ...args)
+}
+
 function getRetryAfterMs(res: Response): number | null {
 	const raw = res.headers.get("retry-after")
 	if (!raw) return null
@@ -132,9 +142,40 @@ export async function azureChatCompletion(
 	}
 
 	const json = (await res.json()) as any
-	const content = json?.choices?.[0]?.message?.content
-	if (typeof content !== "string" || !content.trim()) {
-		throw new Error("Azure OpenAI response missing message content")
+	const choice = json?.choices?.[0]
+	const message = choice?.message
+
+	let content: unknown = message?.content
+	if (Array.isArray(content)) {
+		// Some providers/models return an array of content parts.
+		content = content
+			.map((p: any) => {
+				if (typeof p === "string") return p
+				if (p && typeof p.text === "string") return p.text
+				return ""
+			})
+			.join("")
 	}
+
+	if (typeof content !== "string" || !content.trim()) {
+		if (debugEnabled()) {
+			debugLog("azureChatCompletion:missingContent", {
+				status: res.status,
+				finish_reason: choice?.finish_reason,
+				messageKeys: message ? Object.keys(message) : null
+			})
+			try {
+				debugLog("azureChatCompletion:responseSnippet", JSON.stringify(json).slice(0, 2000))
+			} catch {
+				// ignore
+			}
+		}
+		if (message?.tool_calls) {
+			throw new Error("Azure OpenAI response requested tool calls (no message content)")
+		}
+		const finish = typeof choice?.finish_reason === "string" ? ` (finish_reason=${choice.finish_reason})` : ""
+		throw new Error(`Azure OpenAI response missing message content${finish}`)
+	}
+
 	return content
 }
