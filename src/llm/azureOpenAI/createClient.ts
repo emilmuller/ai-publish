@@ -124,8 +124,8 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 			const out = await chatJsonStructured<{ notes: unknown }>(
 				"Mechanical pass",
 				messages,
-				jsonSchemaResponseFormat("mechanical_pass", schemaNotesOutput),
-				{ maxTokens: 1400 }
+				jsonSchemaResponseFormat("mechanical_pass", schemaNotesOutput)
+				// Let AZURE_OPENAI_MAX_TOKENS (or the client default) control output budget.
 			)
 			return { notes: assertStringArray("Mechanical pass notes", out.notes) }
 		},
