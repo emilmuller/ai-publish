@@ -28,6 +28,14 @@ function maxTokensFromEnv(): number | undefined {
 	return Math.max(MIN, Math.min(MAX, Math.trunc(n)))
 }
 
+function normalizeMaxTokens(n: number | undefined): number | undefined {
+	if (n === undefined) return undefined
+	if (!Number.isFinite(n)) return undefined
+	const MIN = 64
+	const MAX = 32_000
+	return Math.max(MIN, Math.min(MAX, Math.trunc(n)))
+}
+
 function useResponsesApiFromEnv(): boolean {
 	const raw = process.env.AZURE_OPENAI_USE_RESPONSES
 	if (!raw) return false
@@ -98,7 +106,9 @@ async function azureResponsesCompletion(
 		responseFormat?: any
 	}
 ): Promise<string> {
-	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
+	const envMaxTokens = maxTokensFromEnv()
+	const requestedMaxTokens = normalizeMaxTokens(params.maxTokens)
+	const maxTokens = Math.max(envMaxTokens ?? 0, requestedMaxTokens ?? 0) || 1200
 	const responsesApiVersion = responsesApiVersionFromEnvOrCfg(cfg)
 
 	const systemInstructions = params.messages
@@ -229,7 +239,9 @@ async function azureChatCompletionInner(
 	// `max_completion_tokens`. For compatibility across deployments, negotiate the correct field
 	// once, then apply retries/backoff for transient failures.
 	let tokenField: "max_completion_tokens" | "max_tokens" = "max_completion_tokens"
-	const maxTokens = params.maxTokens ?? maxTokensFromEnv() ?? 1200
+	const envMaxTokens = maxTokensFromEnv()
+	const requestedMaxTokens = normalizeMaxTokens(params.maxTokens)
+	const maxTokens = Math.max(envMaxTokens ?? 0, requestedMaxTokens ?? 0) || 1200
 
 	function makeBody(withFormat: boolean): any {
 		const baseBody = makeBaseBody(withFormat)
