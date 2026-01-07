@@ -26,11 +26,14 @@ function parseLogLevel(raw: string | undefined): LogLevel | null {
 function getConfig(): LogConfig {
 	const configured = parseLogLevel(process.env.AI_PUBLISH_LOG_LEVEL)
 	const level: LogLevel = configured ?? (isCliProcess ? "info" : "silent")
+	const traceLLMOutputRaw = process.env.AI_PUBLISH_TRACE_LLM_OUTPUT
 	return {
 		level,
 		traceTools: process.env.AI_PUBLISH_TRACE_TOOLS === "1",
 		traceLLM: process.env.AI_PUBLISH_TRACE_LLM === "1",
-		traceLLMOutput: process.env.AI_PUBLISH_TRACE_LLM_OUTPUT === "1"
+		// Default-on for the CLI so local runs are transparent without extra flags.
+		// Still logs only to stderr to keep stdout machine-readable.
+		traceLLMOutput: traceLLMOutputRaw === "1" || (traceLLMOutputRaw === undefined && isCliProcess)
 	}
 }
 

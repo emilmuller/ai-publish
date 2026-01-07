@@ -275,7 +275,7 @@ Environment variables:
 -   `AI_PUBLISH_LOG_LEVEL`: `silent` | `info` | `debug` | `trace`
 -   `AI_PUBLISH_TRACE_TOOLS=1`: log bounded semantic tool calls (counts + budget usage)
 -   `AI_PUBLISH_TRACE_LLM=1`: log LLM request/response metadata
--   `AI_PUBLISH_TRACE_LLM_OUTPUT=1`: stream raw structured LLM outputs (truncated)
+-   `AI_PUBLISH_TRACE_LLM_OUTPUT`: stream raw structured LLM outputs (truncated) (enabled by default for CLI runs; set to `0` to disable)
 
 ## CLI usage
 
