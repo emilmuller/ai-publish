@@ -1,13 +1,15 @@
 import { describe, expect, test } from "vitest"
 import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { makeTempGitRepo, commitChange } from "./gitFixture"
 import { runGitOrThrow } from "../src/git/runGit"
 import { makeDeterministicTestLLMClient } from "./deterministicTestLLMClient"
 import { generateChangelog, generateReleaseNotes } from "../src/programmatic"
 
 function normalizeHeader(markdown: string): string {
+	// Release notes still render a "(<base>..<head>)" range header.
 	return markdown.replace(
-		/^(#|###) (Changelog|Release Notes) \((?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.\.(?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|HEAD)\)$/m,
+		/^(#|###) (Release Notes) \((?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.\.(?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|HEAD)\)$/m,
 		(_m, hashes: string, title: string) => `${hashes} ${title} (<base>..<head>)`
 	)
 }
@@ -38,13 +40,49 @@ describe("Programmatic API", () => {
 		expect(res.outPath).toMatch(/OUT_CHANGELOG\.md$/i)
 
 		const mdOnDisk = await readFile(res.outPath, "utf8")
-		expect(normalizeHeader(mdOnDisk)).toMatchInlineSnapshot(`
-				"# Changelog (<base>..<head>)\n\n- Expose foo in public API\n- Update name from 'base' to 'changed'\n- Removed obsolete content"
-			`)
+		expect(mdOnDisk).toContain("# Changelog\n")
+		expect(mdOnDisk).toContain("## [Unreleased] - ")
+		expect(mdOnDisk).toContain("### Added")
+		expect(mdOnDisk).toContain("- Expose foo in public API")
+		expect(mdOnDisk).toContain("- Update name from 'base' to 'changed'")
+		// Internal-only deletes (like old.txt) are omitted from the consumer-facing changelog.
 
 		expect(Array.isArray((res.model as any).added)).toBe(true)
 		expect(Array.isArray((res.model as any).changed)).toBe(true)
 		expect((res.model as any).evidence && typeof (res.model as any).evidence).toBe("object")
+	}, 40_000)
+
+	test("generateChangelog upserts Unreleased instead of duplicating", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		await commitChange(dir, "config.yml", "name: base\n", "add config base")
+		const base = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+
+		await commitChange(dir, "config.yml", "name: changed\n", "change config")
+
+		await generateChangelog({
+			base,
+			cwd: dir,
+			llm: "azure",
+			outPath: "OUT_CHANGELOG.md",
+			llmClient: makeDeterministicTestLLMClient()
+		})
+
+		// New change, same base.
+		await commitChange(dir, "config.yml", "name: again\n", "change config again")
+
+		await generateChangelog({
+			base,
+			cwd: dir,
+			llm: "azure",
+			outPath: "OUT_CHANGELOG.md",
+			llmClient: makeDeterministicTestLLMClient()
+		})
+
+		const mdOnDisk = await readFile(join(dir, "OUT_CHANGELOG.md"), "utf8")
+		const unreleasedCount = (mdOnDisk.match(/^## \[Unreleased\]/gm) ?? []).length
+		expect(unreleasedCount).toBe(1)
+		expect(mdOnDisk).toContain("again")
 	}, 40_000)
 
 	test("generateReleaseNotes mirrors CLI params and writes outputs", async () => {
@@ -64,7 +102,7 @@ describe("Programmatic API", () => {
 		expect(res.outPath).toMatch(/OUT_RELEASE\.md$/i)
 
 		const mdOnDisk = await readFile(res.outPath, "utf8")
-		expect(normalizeHeader(mdOnDisk)).toContain("# Release Notes (<base>..<head>)")
+		expect(mdOnDisk).toContain("## Unreleased\n")
 		expect(typeof (res.releaseNotes as any).markdown).toBe("string")
 		expect(Array.isArray((res.releaseNotes as any).evidenceNodeIds)).toBe(true)
 	})
@@ -86,7 +124,7 @@ describe("Programmatic API", () => {
 
 		expect(res.outPath.replace(/\\/g, "/")).toMatch(/\/release-notes\/v1\.2\.3\.md$/i)
 		const mdOnDisk = await readFile(res.outPath, "utf8")
-		expect(normalizeHeader(mdOnDisk)).toContain("# Release Notes (<base>..<head>)")
+		expect(mdOnDisk).toContain("## v1.2.3\n")
 	})
 
 	test("generateReleaseNotes predicts v<nextVersion>.md when HEAD is not tagged", async () => {

@@ -1,7 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, writeFile, readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { dirname, join } from "node:path"
 import { validateChangelogModel } from "./changelog/validate"
+import { extractFirstKeepAChangelogEntry, upsertKeepAChangelogEntry } from "./changelog/prepend"
 import { createAzureOpenAILLMClient } from "./llm/azureOpenAI"
 import { createOpenAILLMClient } from "./llm/openAI"
 import type { LLMClient } from "./llm/types"
@@ -125,7 +126,19 @@ export async function generateChangelog(args: GenerateChangelogArgs): Promise<Ge
 	}
 
 	const absOut = resolve(cwd, outPath)
-	await writeFileAtomic(absOut, generated.markdown)
+	let existing: string | null = null
+	try {
+		existing = await readFile(absOut, "utf8")
+	} catch (e: any) {
+		if (e?.code !== "ENOENT") throw e
+	}
+	if (!existing) {
+		await writeFileAtomic(absOut, generated.markdown)
+	} else {
+		const { entryMarkdown } = extractFirstKeepAChangelogEntry(generated.markdown)
+		const next = upsertKeepAChangelogEntry({ existingMarkdown: existing, newEntryMarkdown: entryMarkdown })
+		await writeFileAtomic(absOut, next)
+	}
 
 	return {
 		markdown: generated.markdown,

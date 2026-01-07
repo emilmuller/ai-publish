@@ -13,6 +13,7 @@ describe("cli args", () => {
 			base: undefined,
 			outPath: "CHANGELOG.md",
 			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
 			llm: "azure"
 		})
 	})
@@ -24,6 +25,7 @@ describe("cli args", () => {
 			base: undefined,
 			outPath: "CHANGELOG.md",
 			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
 			llm: "openai"
 		})
 	})
@@ -35,6 +37,7 @@ describe("cli args", () => {
 			base: "HEAD",
 			outPath: "CHANGELOG.md",
 			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
 			llm: "azure"
 		})
 	})
@@ -46,6 +49,7 @@ describe("cli args", () => {
 			base: "HEAD",
 			outPath: "RELEASE_NOTES.md",
 			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
 			llm: "azure"
 		})
 	})
@@ -86,5 +90,39 @@ describe("cli args", () => {
 	test("help flag produces help", () => {
 		const parsed = parseCliArgs(["--help"])
 		expect(parsed).toEqual({ command: "help" })
+	})
+
+	test("parses commit-context flags", () => {
+		const parsed = parseCliArgs([
+			"changelog",
+			"--llm",
+			"azure",
+			"--commit-context",
+			"snippet",
+			"--commit-context-bytes",
+			"4096",
+			"--commit-context-commits",
+			"12"
+		])
+		expect(parsed).toEqual({
+			command: "changelog",
+			base: undefined,
+			outPath: "CHANGELOG.md",
+			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 4096, maxCommits: 12 },
+			llm: "azure"
+		})
+	})
+
+	test("allows disabling commit context", () => {
+		const parsed = parseCliArgs(["changelog", "--llm", "azure", "--commit-context", "none"])
+		expect(parsed).toEqual({
+			command: "changelog",
+			base: undefined,
+			outPath: "CHANGELOG.md",
+			outProvided: false,
+			commitContext: { mode: "none" },
+			llm: "azure"
+		})
 	})
 })

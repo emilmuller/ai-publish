@@ -175,15 +175,35 @@ export function makeDeterministicTestLLMClient(): LLMClient {
 				return ao - bo || compareStrings(a.filePath, b.filePath) || compareStrings(a.id, b.id)
 			})
 
-			const bulletLines: string[] = []
-			for (const node of nodes) {
+			// Canonical release notes body (version heading added by pipeline).
+			// Keep it short and user-facing.
+			const userNodes = nodes.filter(
+				(n) => n.surface !== "internal" && n.surface !== "tests" && n.surface !== "infra"
+			)
+			const highlights: string[] = []
+			const usedEvidenceIds: string[] = []
+
+			for (const node of userNodes) {
+				if (highlights.length >= 4) break
 				const summary = byNodeId.get(node.id) ?? `${node.changeType} ${node.filePath}`
-				bulletLines.push(`- ${summary}`)
+				// Avoid leaking internal paths in test summaries.
+				if (/\b(src|test|tests|\.github|\.ai-publish)\//i.test(summary)) continue
+				highlights.push(`- ${summary}`)
+				usedEvidenceIds.push(node.id)
 			}
 
+			if (!highlights.length) return { markdown: "", evidenceNodeIds: [] }
+
+			const markdown = [
+				"This release includes user-facing improvements and maintenance updates.",
+				"",
+				"### Highlights",
+				...highlights
+			].join("\n")
+
 			return {
-				markdown: bulletLines.join("\n"),
-				evidenceNodeIds: nodes.map((n) => n.id)
+				markdown,
+				evidenceNodeIds: [...new Set(usedEvidenceIds)].sort(compareStrings)
 			}
 		},
 		async pass3VersionBump(input) {

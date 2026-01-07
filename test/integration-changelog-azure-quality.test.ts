@@ -48,7 +48,8 @@ describe("Integration: Azure changelog quality invariants (local-only)", () => {
 			const llmClient = createAzureOpenAILLMClient()
 			const res = await runChangelogPipeline({ base, cwd: dir, llmClient })
 
-			expect(res.markdown).toMatch(/# Changelog\s*\(/)
+			expect(res.markdown).toMatch(/^# Changelog\b/m)
+			expect(res.markdown).toMatch(/^## \[[^\]]+\]/m)
 			assertNoDiffLeakage(res.markdown)
 
 			// Quality bar for small diffs: every changed file (evidence node) is mentioned by at least one bullet.

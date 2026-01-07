@@ -21,14 +21,10 @@ describe("Integration: release notes generation (network-free)", () => {
 		await commitChange(dir, "src/public/newApi.ts", "export const foo = 1\n", "add public api")
 
 		const res = await runReleaseNotesPipeline({ base, cwd: dir, llmClient: makeDeterministicTestLLMClient() })
-		const normalized = res.markdown.replace(
-			/^# Release Notes \((?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.\.(?:[0-9a-f]{7,40}|HEAD)\)$/m,
-			"# Release Notes (<base>..<head>)"
-		)
-
-		expect(normalized).toMatchInlineSnapshot(`
-			"# Release Notes (<base>..<head>)\n\n- Expose foo in public API\n- Update name from 'base' to 'changed'\n- Removed obsolete content\n"
-		`)
+		expect(res.markdown).toContain("## Unreleased\n")
+		expect(res.markdown).toContain("### Highlights")
+		expect(res.markdown).toContain("- Expose foo in public API")
+		expect(res.markdown).toContain("- Update name from 'base' to 'changed'")
 	}, 60_000)
 
 	test("allows empty release notes markdown", async () => {
@@ -67,8 +63,6 @@ describe("Integration: release notes generation (network-free)", () => {
 		const res = await runReleaseNotesPipeline({ base, cwd: dir, llmClient: stub })
 		expect(res.releaseNotes.markdown).toBe("")
 		expect(res.releaseNotes.evidenceNodeIds).toEqual([])
-		expect(res.markdown).toMatch(/^# Release Notes \(/)
-		// Should contain only the header line plus trailing newline.
-		expect(res.markdown.trimEnd().split(/\r?\n/).length).toBe(1)
+		expect(res.markdown).toBe("## Unreleased\n")
 	})
 })

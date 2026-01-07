@@ -22,18 +22,13 @@ describe("Integration: changelog generation (network-free)", () => {
 		await commitChange(dir, "src/public/newApi.ts", "export const foo = 1\n", "add public api")
 
 		const res = await runChangelogPipeline({ base, cwd: dir, llmClient: makeDeterministicTestLLMClient() })
-		const normalized = res.markdown.replace(
-			/^# Changelog \((?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.\.(?:[0-9a-f]{7,40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|HEAD)\)$/m,
-			"# Changelog (<base>..<head>)"
-		)
 
-		// End-to-end assertion: stable markdown structure + deterministic bullet ordering.
-		expect(normalized).toMatchInlineSnapshot(`
-			"# Changelog (<base>..<head>)
-
-			- Expose foo in public API
-			- Update name from 'base' to 'changed'
-			- Removed obsolete content"
-		`)
+		// End-to-end assertion: Keep a Changelog structure + stable bullet text.
+		expect(res.markdown).toContain("# Changelog\n")
+		expect(res.markdown).toContain("## [Unreleased] - ")
+		expect(res.markdown).toContain("### Added")
+		expect(res.markdown).toContain("- Expose foo in public API")
+		expect(res.markdown).toContain("- Update name from 'base' to 'changed'")
+		// Internal-only deletes (like old.txt) are omitted from the consumer-facing changelog.
 	}, 60_000)
 })

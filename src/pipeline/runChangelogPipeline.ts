@@ -14,6 +14,10 @@ import { searchRepoFiles } from "../repo/searchRepoFiles"
 import { searchRepoPaths } from "../repo/searchRepoPaths"
 import { searchRepoText } from "../repo/searchRepoText"
 import { listRepoFiles } from "../repo/listRepoFiles"
+import { runGitOrThrow } from "../git/runGit"
+import { getCommitContext } from "../git/getCommitContext"
+import { renderKeepAChangelogMarkdown } from "../changelog/renderKeepAChangelog"
+import { logDebug, logInfo, traceToolsEnabled } from "../util/logger"
 
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
@@ -36,9 +40,23 @@ export async function runChangelogPipeline(params: {
 	headLabel?: string
 	cwd?: string
 	llmClient: LLMClient
+	/** Optional bounded git commit message context (untrusted, non-authoritative). Off by default. */
+	commitContext?: {
+		mode: "none" | "snippet" | "full"
+		maxCommits?: number
+		maxTotalBytes?: number
+		maxBodyBytesPerCommit?: number
+	}
 }): Promise<{ markdown: string; model: ChangelogModel }> {
 	const cwd = params.cwd ?? process.cwd()
+	logInfo("changelog:start", { base: params.base, baseLabel: params.baseLabel, headLabel: params.headLabel })
 	debugLog("changelogPipeline", { base: params.base, cwd })
+
+	async function getHeadCommitDateISO(headSha: string): Promise<string> {
+		// Deterministic (commit date), date portion: YYYY-MM-DD
+		const out = await runGitOrThrow(["show", "-s", "--format=%cs", headSha], { cwd })
+		return out.trim()
+	}
 
 	function isMaxTotalBytesExceededError(err: unknown): boolean {
 		const msg = (err as any)?.message
@@ -48,6 +66,11 @@ export async function runChangelogPipeline(params: {
 	// Always build the diff index first; it is the queryable authority.
 	debugLog("changelogPipeline:indexDiff")
 	const indexRes = await indexDiff({ base: params.base, cwd })
+	logInfo("changelog:indexed", {
+		baseSha: indexRes.baseSha,
+		headSha: indexRes.headSha,
+		files: indexRes.summary.files.length
+	})
 	debugLog("changelogPipeline:indexed", {
 		baseSha: indexRes.baseSha,
 		headSha: indexRes.headSha,
@@ -64,6 +87,19 @@ export async function runChangelogPipeline(params: {
 	const evidence = buildEvidenceFromManifest(diffIndexManifest, { instructionsByPath })
 	const deterministicFacts = buildDeterministicMechanicalFacts({ diffSummary, evidence })
 
+	const commitContext =
+		params.commitContext && params.commitContext.mode !== "none"
+			? await getCommitContext({
+					cwd,
+					baseSha: indexRes.baseSha,
+					headSha: indexRes.headSha,
+					mode: params.commitContext.mode,
+					maxCommits: params.commitContext.maxCommits,
+					maxTotalBytes: params.commitContext.maxTotalBytes,
+					maxBodyBytesPerCommit: params.commitContext.maxBodyBytesPerCommit
+			  })
+			: undefined
+
 	const mechanical = await params.llmClient.pass1Mechanical({
 		base: params.base,
 		diffSummary,
@@ -73,6 +109,7 @@ export async function runChangelogPipeline(params: {
 		deterministicFacts
 	})
 	debugLog("changelogPipeline:pass1", { notes: mechanical.notes.length })
+	logInfo("changelog:pass1", { notes: mechanical.notes.length })
 
 	const DEFAULT_GLOBAL_HUNK_BUDGET_BYTES = 256 * 1024
 	let remainingBytes = DEFAULT_GLOBAL_HUNK_BUDGET_BYTES
@@ -97,9 +134,11 @@ export async function runChangelogPipeline(params: {
 	let remainingRepoMetaBytes = DEFAULT_GLOBAL_REPO_META_BUDGET_BYTES
 
 	const semantic = await params.llmClient.pass2Semantic(
-		{ base: params.base, mechanical, evidence, resolvedInstructions },
+		{ base: params.base, mechanical, evidence, resolvedInstructions, commitContext },
 		{
 			getDiffHunks: async (hunkIds) => {
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:getDiffHunks", { requested: hunkIds.length, remainingBytes })
 				const unknown = hunkIds.filter((id) => !allowedHunkIds.has(id))
 				if (unknown.length) {
 					debugLog("changelogPipeline:semantic:unknownHunkIds", {
@@ -132,6 +171,12 @@ export async function runChangelogPipeline(params: {
 							collected.push(...hunks)
 							const used = hunks.reduce((sum: number, h: DiffHunk) => sum + (h.byteLength ?? 0), 0)
 							remainingBytes -= used
+							if (trace)
+								logInfo("tool:getDiffHunks:chunk", {
+									returned: hunks.length,
+									usedBytes: used,
+									remainingBytes
+								})
 							cursor += chunkSize
 							break
 						} catch (err) {
@@ -143,6 +188,7 @@ export async function runChangelogPipeline(params: {
 										id: chunkIds[0],
 										remainingBytes
 									})
+									if (trace) logInfo("tool:getDiffHunks:skip", { remainingBytes })
 									cursor += 1
 									break
 								}
@@ -153,11 +199,14 @@ export async function runChangelogPipeline(params: {
 						}
 					}
 				}
+				if (trace) logInfo("tool:getDiffHunks:result", { returned: collected.length, remainingBytes })
 
 				return collected
 			},
 			getRepoFileSnippets: async (requests) => {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:getRepoFileSnippets", { requests: requests.length, remainingRepoBytes })
 				let snippets: any[] = []
 				try {
 					snippets = await getRepoFileSnippets({
@@ -172,14 +221,23 @@ export async function runChangelogPipeline(params: {
 					debugLog("changelogPipeline:semantic:repoSnippetsFailed", {
 						error: (e as Error)?.message ?? String(e)
 					})
+					logDebug("tool:getRepoFileSnippets:failed", { error: (e as Error)?.message ?? String(e) })
 					return []
 				}
 				const used = snippets.reduce((sum, s) => sum + (s.byteLength ?? 0), 0)
 				remainingRepoBytes -= used
+				if (trace)
+					logInfo("tool:getRepoFileSnippets:result", {
+						returned: snippets.length,
+						usedBytes: used,
+						remainingRepoBytes
+					})
 				return snippets
 			},
 			getRepoSnippetAround: async (requests) => {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:getRepoSnippetAround", { requests: requests.length, remainingRepoBytes })
 				let snippets: any[] = []
 				try {
 					snippets = await getRepoSnippetAround({
@@ -195,14 +253,23 @@ export async function runChangelogPipeline(params: {
 					debugLog("changelogPipeline:semantic:repoSnippetAroundFailed", {
 						error: (e as Error)?.message ?? String(e)
 					})
+					logDebug("tool:getRepoSnippetAround:failed", { error: (e as Error)?.message ?? String(e) })
 					return []
 				}
 				const used = snippets.reduce((sum, s) => sum + (s.byteLength ?? 0), 0)
 				remainingRepoBytes -= used
+				if (trace)
+					logInfo("tool:getRepoSnippetAround:result", {
+						returned: snippets.length,
+						usedBytes: used,
+						remainingRepoBytes
+					})
 				return snippets
 			},
 			getRepoFileMeta: async (requests) => {
 				if (remainingRepoMetaBytes <= 0) throw new Error("LLM repo file meta budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:getRepoFileMeta", { requests: requests.length, remainingRepoMetaBytes })
 				const meta = await getRepoFileMeta({
 					cwd,
 					ref: indexRes.headSha,
@@ -214,10 +281,18 @@ export async function runChangelogPipeline(params: {
 				})
 				const used = meta.reduce((sum, m) => sum + (m.byteLength ?? 0), 0)
 				remainingRepoMetaBytes -= used
+				if (trace)
+					logInfo("tool:getRepoFileMeta:result", {
+						returned: meta.length,
+						usedBytes: used,
+						remainingRepoMetaBytes
+					})
 				return meta
 			},
 			searchRepoFiles: async (requests) => {
 				if (remainingSearchBytes <= 0) throw new Error("LLM repo search budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:searchRepoFiles", { requests: requests.length, remainingSearchBytes })
 				const results = await searchRepoFiles({
 					cwd,
 					ref: indexRes.headSha,
@@ -228,10 +303,18 @@ export async function runChangelogPipeline(params: {
 				})
 				const used = results.reduce((sum, r) => sum + (r.byteLength ?? 0), 0)
 				remainingSearchBytes -= used
+				if (trace)
+					logInfo("tool:searchRepoFiles:result", {
+						returned: results.length,
+						usedBytes: used,
+						remainingSearchBytes
+					})
 				return results
 			},
 			searchRepoText: async (requests) => {
 				if (remainingRepoTextSearchBytes <= 0) throw new Error("LLM repo-wide search budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:searchRepoText", { requests: requests.length, remainingRepoTextSearchBytes })
 				const results = await searchRepoText({
 					cwd,
 					ref: indexRes.headSha,
@@ -243,10 +326,18 @@ export async function runChangelogPipeline(params: {
 				})
 				const used = results.reduce((sum, r) => sum + (r.byteLength ?? 0), 0)
 				remainingRepoTextSearchBytes -= used
+				if (trace)
+					logInfo("tool:searchRepoText:result", {
+						returned: results.length,
+						usedBytes: used,
+						remainingRepoTextSearchBytes
+					})
 				return results
 			},
 			listRepoFiles: async (requests) => {
 				if (remainingRepoListBytes <= 0) throw new Error("LLM repo file listing budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:listRepoFiles", { requests: requests.length, remainingRepoListBytes })
 				const results = await listRepoFiles({
 					cwd,
 					ref: indexRes.headSha,
@@ -256,10 +347,18 @@ export async function runChangelogPipeline(params: {
 				})
 				const used = results.reduce((sum, r) => sum + (r.byteLength ?? 0), 0)
 				remainingRepoListBytes -= used
+				if (trace)
+					logInfo("tool:listRepoFiles:result", {
+						returned: results.length,
+						usedBytes: used,
+						remainingRepoListBytes
+					})
 				return results
 			},
 			searchRepoPaths: async (requests) => {
 				if (remainingRepoPathSearchBytes <= 0) throw new Error("LLM repo path search budget exhausted")
+				const trace = traceToolsEnabled()
+				if (trace) logInfo("tool:searchRepoPaths", { requests: requests.length, remainingRepoPathSearchBytes })
 				const results = await searchRepoPaths({
 					cwd,
 					ref: indexRes.headSha,
@@ -269,13 +368,25 @@ export async function runChangelogPipeline(params: {
 				})
 				const used = results.reduce((sum, r) => sum + (r.byteLength ?? 0), 0)
 				remainingRepoPathSearchBytes -= used
+				if (trace)
+					logInfo("tool:searchRepoPaths:result", {
+						returned: results.length,
+						usedBytes: used,
+						remainingRepoPathSearchBytes
+					})
 				return results
 			}
 		}
 	)
 	debugLog("changelogPipeline:pass2", { notes: semantic.notes.length })
 
-	const editorial = await params.llmClient.pass3Editorial({ mechanical, semantic, evidence, resolvedInstructions })
+	const editorial = await params.llmClient.pass3Editorial({
+		mechanical,
+		semantic,
+		evidence,
+		resolvedInstructions,
+		commitContext
+	})
 	debugLog("changelogPipeline:pass3")
 
 	function repairBulletEvidenceIds(text: string, ids: string[]): string[] {
@@ -480,26 +591,14 @@ export async function runChangelogPipeline(params: {
 	const validation = validateChangelogModel(stabilized)
 	if (!validation.ok) throw new Error(`LLM changelog model validation failed:\n${validation.errors.join("\n")}`)
 
-	// Human-friendly markdown rendering:
-	// - Single flat list (no empty sections)
-	// - Deterministic ordering by section priority + stable bullet sorting above
-	const orderedBullets = [
-		...stabilized.breakingChanges,
-		...stabilized.added,
-		...stabilized.changed,
-		...stabilized.fixed,
-		...stabilized.removed,
-		...stabilized.internalTooling
-	]
-
-	const baseDisplay = (params.baseLabel ?? "").trim() || indexRes.baseSha
-	const headDisplay = (params.headLabel ?? "").trim() || indexRes.headSha
-	const lines: string[] = [`# Changelog (${baseDisplay}..${headDisplay})`]
-	if (orderedBullets.length) {
-		lines.push("")
-		for (const b of orderedBullets) lines.push(`- ${b.text}`)
-	}
-	const markdown = lines.join("\n")
+	// Consumer-facing markdown rendering (Keep a Changelog style).
+	// Authoritative evidence remains in the returned model.
+	const releaseDateISO = await getHeadCommitDateISO(indexRes.headSha)
+	const markdown = renderKeepAChangelogMarkdown({
+		model: stabilized,
+		versionLabel: params.headLabel,
+		releaseDateISO
+	})
 
 	// This runner does not render markdown for LLM mode yet; callers can render
 	// from the returned model. We return the index path for auditability.

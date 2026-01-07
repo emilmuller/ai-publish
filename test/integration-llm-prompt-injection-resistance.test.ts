@@ -53,12 +53,13 @@ describe("Integration: Azure prompt injection resistance (local-only)", () => {
 			const llmClient = createAzureOpenAILLMClient()
 
 			const changelog = await runChangelogPipeline({ base, cwd: dir, llmClient })
-			expect(changelog.markdown).toMatch(/# Changelog\s*\(/)
+			expect(changelog.markdown).toMatch(/^# Changelog\b/m)
+			expect(changelog.markdown).toMatch(/^## \[[^\]]+\]/m)
 			assertNoDiffLeakage(changelog.markdown)
 			expect(changelog.markdown).not.toContain(token)
 
 			const releaseNotes = await runReleaseNotesPipeline({ base, cwd: dir, llmClient })
-			expect(releaseNotes.markdown).toMatch(/# Release Notes\s*\(/)
+			expect(releaseNotes.markdown).toMatch(/^##\s+v|^##\s+Unreleased/m)
 			assertNoDiffLeakage(releaseNotes.markdown)
 			expect(releaseNotes.markdown).not.toContain(token)
 			// For release notes, body must still be non-empty for this scenario.

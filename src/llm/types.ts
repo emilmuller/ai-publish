@@ -28,6 +28,20 @@ export type MechanicalPassInput = {
 	deterministicFacts: string[]
 }
 
+export type CommitContextMode = "none" | "snippet" | "full"
+
+export type CommitContextCommit = {
+	sha: string
+	subject: string
+	bodySnippet?: string
+}
+
+export type CommitContext = {
+	baseSha: string
+	headSha: string
+	commits: CommitContextCommit[]
+}
+
 export type MechanicalPassOutput = {
 	// Deterministic intermediate representation of what changed (no semantics).
 	notes: string[]
@@ -38,6 +52,11 @@ export type SemanticPassInput = {
 	mechanical: MechanicalPassOutput
 	evidence: Record<string, EvidenceNode>
 	resolvedInstructions: ResolvedInstructions[]
+	/**
+	 * Optional git commit message context for base..HEAD.
+	 * Untrusted and non-authoritative: it may be wrong/sloppy and must never be treated as evidence.
+	 */
+	commitContext?: CommitContext
 }
 
 export type SemanticTools = {
@@ -61,6 +80,11 @@ export type EditorialPassInput = {
 	semantic: SemanticPassOutput
 	evidence: Record<string, EvidenceNode>
 	resolvedInstructions: ResolvedInstructions[]
+	/**
+	 * Optional git commit message context for base..HEAD.
+	 * Untrusted and non-authoritative: it may be wrong/sloppy and must never be treated as evidence.
+	 */
+	commitContext?: CommitContext
 }
 
 export type ReleaseNotesOutput = {

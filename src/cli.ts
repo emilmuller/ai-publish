@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { writeFile } from "node:fs/promises"
-import { mkdir } from "node:fs/promises"
+import { writeFile, readFile, mkdir } from "node:fs/promises"
 import { resolve } from "node:path"
 import { dirname, join } from "node:path"
 import { validateChangelogModel } from "./changelog/validate"
+import { extractFirstKeepAChangelogEntry, upsertKeepAChangelogEntry } from "./changelog/prepend"
 import { runChangelogPipeline } from "./pipeline/runChangelogPipeline"
 import { runReleaseNotesPipeline } from "./pipeline/runReleaseNotesPipeline"
 import { runVersionBumpPipeline } from "./pipeline/runVersionBumpPipeline"
@@ -13,6 +13,7 @@ import { runPostpublishPipeline } from "./pipeline/runPostpublishPipeline"
 import { createAzureOpenAILLMClient } from "./llm/azureOpenAI"
 import { createOpenAILLMClient } from "./llm/openAI"
 import { writeFileAtomic } from "./util/fs"
+import { logInfo, markCliProcess } from "./util/logger"
 import { resolveHeadVersionTagFromGitTags, resolveVersionBaseFromGitTags } from "./version/resolveVersionBase"
 
 type ParsedArgs =
@@ -22,6 +23,11 @@ type ParsedArgs =
 			base?: string
 			outPath: string
 			outProvided: boolean
+			commitContext?: {
+				mode: "none" | "snippet" | "full"
+				maxCommits?: number
+				maxTotalBytes?: number
+			}
 			llm: "azure" | "openai"
 	  }
 	| {
@@ -29,6 +35,11 @@ type ParsedArgs =
 			base?: string
 			outPath: string
 			outProvided: boolean
+			commitContext?: {
+				mode: "none" | "snippet" | "full"
+				maxCommits?: number
+				maxTotalBytes?: number
+			}
 			llm: "azure" | "openai"
 	  }
 	| {
@@ -51,9 +62,9 @@ type ParsedArgs =
 export function formatUsage(): string {
 	return [
 		"Usage:",
-		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
-		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai> [--debug]",
-		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--no-write] [--out <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--debug]",
 		"  ai-publish --help",
 		"",
@@ -61,6 +72,10 @@ export function formatUsage(): string {
 		"  - LLM mode is required for changelog/release-notes/prepublish; use --llm azure or --llm openai.",
 		"  - --debug enables verbose stderr diagnostics.",
 		"  - If --base is omitted, the tool diffs from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
+		"  - Commit messages are enabled by default as untrusted hints (never treated as evidence of changes).",
+		"    - Default: --commit-context snippet --commit-context-bytes 65536 --commit-context-commits 200",
+		"    - Disable: --commit-context none",
+		"  - --package is a backwards-compatible alias for npm manifests (prepublish only); it implies --project-type npm.",
 		"  - Unknown flags are rejected."
 	].join("\n")
 }
@@ -97,6 +112,16 @@ function isLLMProvider(v: string): v is "azure" | "openai" {
 	return v === "azure" || v === "openai"
 }
 
+function parseIntFlag(v: string, flag: string): number {
+	const n = Number(v)
+	if (!Number.isFinite(n) || Math.trunc(n) !== n) throw new Error(`Invalid integer for ${flag}: ${v}`)
+	return n
+}
+
+function isCommitContextMode(v: string): v is "none" | "snippet" | "full" {
+	return v === "none" || v === "snippet" || v === "full"
+}
+
 export function parseCliArgs(argv: string[]): ParsedArgs {
 	const args = [...argv]
 
@@ -121,6 +146,9 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	let writeManifest = true
 	let packageJsonPath: string | undefined = "package.json"
 	let llm: "azure" | "openai" | undefined
+	let commitContextMode: "none" | "snippet" | "full" | undefined
+	let commitContextBytes: number | undefined
+	let commitContextCommits: number | undefined
 
 	const seenFlags = new Set<string>()
 
@@ -141,6 +169,9 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 
 		switch (token) {
 			case "--base": {
+				if (command !== "changelog" && command !== "release-notes") {
+					throw new Error(`--base is only supported for ${"changelog"} and ${"release-notes"}`)
+				}
 				base = takeValue(args, i, token)
 				i += 1
 				break
@@ -190,9 +221,38 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 				break
 			}
 			case "--llm": {
+				if (command === "postpublish") {
+					throw new Error("--llm is not supported for postpublish")
+				}
 				const v = takeValue(args, i, token)
 				if (!isLLMProvider(v)) throw new Error(`Unsupported LLM provider: ${v}`)
 				llm = v
+				i += 1
+				break
+			}
+			case "--commit-context": {
+				if (command !== "changelog" && command !== "release-notes") {
+					throw new Error("--commit-context is only supported for changelog and release-notes")
+				}
+				const v = takeValue(args, i, token)
+				if (!isCommitContextMode(v)) throw new Error(`Unsupported commit context mode: ${v}`)
+				commitContextMode = v
+				i += 1
+				break
+			}
+			case "--commit-context-bytes": {
+				if (command !== "changelog" && command !== "release-notes") {
+					throw new Error("--commit-context-bytes is only supported for changelog and release-notes")
+				}
+				commitContextBytes = parseIntFlag(takeValue(args, i, token), token)
+				i += 1
+				break
+			}
+			case "--commit-context-commits": {
+				if (command !== "changelog" && command !== "release-notes") {
+					throw new Error("--commit-context-commits is only supported for changelog and release-notes")
+				}
+				commitContextCommits = parseIntFlag(takeValue(args, i, token), token)
 				i += 1
 				break
 			}
@@ -203,8 +263,30 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 
 	if (command !== "postpublish" && !llm) throw new Error("Missing required flag: --llm")
 
-	if (command === "changelog") return { command: "changelog", base, outPath, outProvided, llm: llm! }
-	if (command === "release-notes") return { command: "release-notes", base, outPath, outProvided, llm: llm! }
+	// Commit messages are untrusted context-only hints.
+	// Enable by default for changelog/release-notes, with conservative budgets.
+	const DEFAULT_COMMIT_CONTEXT_MODE: "snippet" = "snippet"
+	const DEFAULT_COMMIT_CONTEXT_BYTES = 64 * 1024
+	const DEFAULT_COMMIT_CONTEXT_COMMITS = 200
+
+	const shouldHaveCommitContext = command === "changelog" || command === "release-notes"
+	const resolvedCommitContextMode = shouldHaveCommitContext
+		? commitContextMode ?? DEFAULT_COMMIT_CONTEXT_MODE
+		: undefined
+
+	const commitContext = !resolvedCommitContextMode
+		? undefined
+		: resolvedCommitContextMode === "none"
+		? { mode: "none" as const }
+		: {
+				mode: resolvedCommitContextMode,
+				maxTotalBytes: commitContextBytes ?? DEFAULT_COMMIT_CONTEXT_BYTES,
+				maxCommits: commitContextCommits ?? DEFAULT_COMMIT_CONTEXT_COMMITS
+		  }
+
+	if (command === "changelog") return { command: "changelog", base, outPath, outProvided, commitContext, llm: llm! }
+	if (command === "release-notes")
+		return { command: "release-notes", base, outPath, outProvided, commitContext, llm: llm! }
 	if (command === "prepublish") {
 		return {
 			command: "prepublish",
@@ -222,6 +304,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 }
 
 async function main() {
+	markCliProcess()
 	const rawArgv = process.argv.slice(2)
 	const debug = debugEnabledFromEnv() || rawArgv.includes("--debug")
 	if (debug && process.env.AI_PUBLISH_DEBUG_CLI !== "1") process.env.AI_PUBLISH_DEBUG_CLI = "1"
@@ -238,6 +321,8 @@ async function main() {
 	}
 
 	if (parsed.command === "help") usage(0)
+
+	logInfo("cli:command", { command: parsed.command })
 
 	const llmClient =
 		parsed.command === "postpublish"
@@ -279,7 +364,13 @@ async function main() {
 			headTag = resolvedHead.headTag
 			headLabel = resolvedHead.headTag ?? "HEAD"
 		}
-		const generated = await runChangelogPipeline({ base: baseUsed, baseLabel, headLabel, llmClient: llmClient! })
+		const generated = await runChangelogPipeline({
+			base: baseUsed,
+			baseLabel,
+			headLabel,
+			llmClient: llmClient!,
+			commitContext: parsed.commitContext
+		})
 		// (llmClient is required for changelog)
 		const validation = validateChangelogModel(generated.model)
 		if (!validation.ok) {
@@ -325,7 +416,13 @@ async function main() {
 				headLabel = predictedTag
 			}
 		}
-		const generated = await runReleaseNotesPipeline({ base: baseUsed, baseLabel, headLabel, llmClient: llmClient! })
+		const generated = await runReleaseNotesPipeline({
+			base: baseUsed,
+			baseLabel,
+			headLabel,
+			llmClient: llmClient!,
+			commitContext: parsed.commitContext
+		})
 		markdown = generated.markdown
 	} else if (parsed.command === "prepublish") {
 		const pre = await runPrepublishPipeline({

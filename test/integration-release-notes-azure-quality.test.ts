@@ -56,7 +56,7 @@ describe("Integration: Azure release notes quality invariants (local-only)", () 
 			const llmClient = createAzureOpenAILLMClient()
 			const res = await runReleaseNotesPipeline({ base, cwd: dir, llmClient })
 
-			expect(res.markdown).toMatch(/# Release Notes\s*\(/)
+			expect(res.markdown).toMatch(/^##\s+v|^##\s+Unreleased/m)
 			assertNoDiffLeakage(res.markdown)
 			expect(res.releaseNotes.markdown.trim().length).toBeGreaterThan(0)
 			expect(res.markdown.length).toBeLessThan(4000)

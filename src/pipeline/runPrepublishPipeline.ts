@@ -17,6 +17,7 @@ import {
 } from "../version/manifests"
 import { assertCleanWorktree, tagExists } from "../git/release"
 import { buildReleaseTagMessage } from "../changelog/tagSummary"
+import { extractFirstKeepAChangelogEntry, prependKeepAChangelogEntry } from "../changelog/prepend"
 
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
@@ -35,12 +36,20 @@ function toGitPath(pathFromCwd: string): string {
 function patchChangelogHeaderRange(markdown: string, headLabel: string): string {
 	const lines = markdown.replace(/\r\n/g, "\n").split("\n")
 	if (!lines.length) return markdown
-	const first = lines[0] ?? ""
-	const m = /^# Changelog \((.+)\.\.(.+)\)$/.exec(first.trim())
-	if (!m) return markdown
-	const baseDisplay = m[1]!
-	lines[0] = `# Changelog (${baseDisplay}..${headLabel})`
-	return lines.join("\n")
+
+	const normalizedHead = headLabel.replace(/^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/i, "$1")
+
+	// Replace the first version heading: "## [X] - YYYY-MM-DD".
+	for (let i = 0; i < lines.length; i++) {
+		const line = (lines[i] ?? "").trim()
+		const m = /^##\s+\[([^\]]+)\](\s+-\s+\d{4}-\d{2}-\d{2})?$/.exec(line)
+		if (!m) continue
+		const suffix = m[2] ?? ""
+		lines[i] = `## [${normalizedHead}]${suffix}`
+		return lines.join("\n")
+	}
+
+	return markdown
 }
 
 function updateManifestContent(params: { type: ManifestType; raw: string; nextVersion: string }): string {
@@ -196,7 +205,22 @@ export async function runPrepublishPipeline(params: {
 
 	// Write changelog (overwrite).
 	const patchedChangelogMarkdown = patchChangelogHeaderRange(changelogGenerated.markdown, predictedTag)
-	await writeFileAtomic(absChangelogPath, patchedChangelogMarkdown)
+	let existingChangelog: string | null = null
+	try {
+		existingChangelog = await readFile(absChangelogPath, "utf8")
+	} catch (e: any) {
+		if (e?.code !== "ENOENT") throw e
+	}
+	if (!existingChangelog) {
+		await writeFileAtomic(absChangelogPath, patchedChangelogMarkdown)
+	} else {
+		const { entryMarkdown } = extractFirstKeepAChangelogEntry(patchedChangelogMarkdown)
+		const next = prependKeepAChangelogEntry({
+			existingMarkdown: existingChangelog,
+			newEntryMarkdown: entryMarkdown
+		})
+		await writeFileAtomic(absChangelogPath, next)
+	}
 	debugLog("prepublishPipeline:wrote", changelogOutPath)
 
 	// Write release notes.

@@ -18,6 +18,14 @@ describe("prepublish pipeline", () => {
 			"add package"
 		)
 		await commitChange(dir, "config.yml", "name: base\n", "add config base")
+
+		// Seed an existing legacy changelog as part of the base.
+		await commitChange(
+			dir,
+			"CHANGELOG.md",
+			["# Changelog (4b825dc642cb6eb9a060e54bf8d69288fbee4904..v1.2.3)", "", "- Initial release", ""].join("\n"),
+			"seed changelog"
+		)
 		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
 		await runGitOrThrow(["tag", "v1.2.3", tagCommit], { cwd: dir })
 
@@ -45,13 +53,17 @@ describe("prepublish pipeline", () => {
 		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any
 		expect(pkg.version).toBe("1.2.4")
 
-		// Changelog entry should reference v1.2.3..v1.2.4.
+		// Changelog should contain the new version section (Keep a Changelog style).
 		const changelog = await readFile(join(dir, "CHANGELOG.md"), "utf8")
-		expect(changelog).toMatch(/Changelog \(v1\.2\.3\.\.v1\.2\.4\)/)
+		expect(changelog).toContain("# Changelog")
+		expect(changelog).toMatch(/## \[1\.2\.4\] - \d{4}-\d{2}-\d{2}/)
+		// Existing history should be preserved below.
+		expect(changelog).toContain("## [1.2.3]")
 
 		// Release notes should be written under release-notes/v1.2.4.md.
 		const rnPath = join(dir, "release-notes", "v1.2.4.md")
 		const releaseNotes = await readFile(rnPath, "utf8")
-		expect(releaseNotes).toMatch(/# Release Notes \(v1\.2\.3\.\.v1\.2\.4\)/)
+		expect(releaseNotes).toContain("## v1.2.4\n")
+		expect(releaseNotes).toContain("### Highlights")
 	}, 60_000)
 })
