@@ -1,5 +1,17 @@
+import { compareStrings } from "../util/compare"
+
 function normalizeOneLine(s: string): string {
 	return (s ?? "").trim().replace(/\s+/g, " ")
+}
+
+function isBulletLine(line: string): boolean {
+	return line.trim().startsWith("- ")
+}
+
+function bulletSortKey(line: string): string {
+	const t = line.trim()
+	const withoutMarker = t.startsWith("- ") ? t.slice(2) : t
+	return normalizeOneLine(withoutMarker)
 }
 
 function normalizeReleaseVersion(label: string | undefined): string {
@@ -62,6 +74,91 @@ const allowedSectionTitles = new Set([
 	"Performance"
 ])
 
+const canonicalSectionOrder = ["Highlights", "Breaking Changes", "Fixes", "Deprecations", "Security", "Performance"]
+
+function canonicalizeSections(body: string): string {
+	const lines = body.replace(/\r\n/g, "\n").split("\n")
+	const byTitle = new Map<string, string[]>()
+	let currentTitle: string | null = null
+	let currentAllowed = true
+
+	for (const line of lines) {
+		const t = line.trim()
+		const m = /^###\s+(.+)$/.exec(t)
+		if (m) {
+			const title = m[1]!.trim()
+			currentAllowed = allowedSectionTitles.has(title)
+			currentTitle = currentAllowed ? title : null
+			if (currentTitle && !byTitle.has(currentTitle)) byTitle.set(currentTitle, [])
+			continue
+		}
+		if (!currentAllowed || !currentTitle) continue
+		byTitle.get(currentTitle)!.push(line)
+	}
+
+	const out: string[] = []
+	for (const title of canonicalSectionOrder) {
+		const content = byTitle.get(title) ?? []
+		const trimmed = content
+			.join("\n")
+			.replace(/\n{3,}/g, "\n\n")
+			.trim()
+		if (!trimmed) continue
+		out.push(`### ${title}`)
+		out.push(trimmed)
+	}
+
+	return out
+		.join("\n\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim()
+}
+
+function sortBulletsWithinSections(body: string): string {
+	const lines = body.replace(/\r\n/g, "\n").split("\n")
+	const out: string[] = []
+	let currentAllowed = true
+
+	let i = 0
+	while (i < lines.length) {
+		const line = lines[i] ?? ""
+		const t = line.trim()
+		const m = /^###\s+(.+)$/.exec(t)
+		if (m) {
+			const title = m[1]!.trim()
+			currentAllowed = allowedSectionTitles.has(title)
+			if (currentAllowed) out.push(`### ${title}`)
+			i++
+			continue
+		}
+
+		if (!currentAllowed) {
+			i++
+			continue
+		}
+
+		// For allowed sections, sort each contiguous bullet run deterministically.
+		if (isBulletLine(line)) {
+			const run: string[] = []
+			while (i < lines.length && isBulletLine(lines[i] ?? "")) {
+				run.push(lines[i] ?? "")
+				i++
+			}
+			run.sort((a, b) => compareStrings(bulletSortKey(a), bulletSortKey(b)) || compareStrings(a, b))
+			out.push(...run)
+			continue
+		}
+
+		out.push(line)
+		i++
+	}
+
+	return out
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim()
+}
+
 function extractLeadingSummary(body: string): { summary: string; rest: string } {
 	const lines = body.replace(/\r\n/g, "\n").split("\n")
 	const summaryLines: string[] = []
@@ -104,27 +201,9 @@ function sanitizeBody(body: string): string {
 }
 
 function ensureAllowedSections(body: string): string {
-	const lines = body.replace(/\r\n/g, "\n").split("\n")
-	const out: string[] = []
-	let currentAllowed = true
-
-	for (const line of lines) {
-		const t = line.trim()
-		const m = /^###\s+(.+)$/.exec(t)
-		if (m) {
-			const title = m[1]!.trim()
-			currentAllowed = allowedSectionTitles.has(title)
-			if (currentAllowed) out.push(`### ${title}`)
-			continue
-		}
-		if (!currentAllowed) continue
-		out.push(line)
-	}
-
-	return out
-		.join("\n")
-		.replace(/\n{3,}/g, "\n\n")
-		.trim()
+	// Keep the public surface the same for callers, but internally emit
+	// allowed sections in a canonical, deterministic order.
+	return canonicalizeSections(body)
 }
 
 function wrapBulletsAsHighlights(body: string): string {
@@ -155,10 +234,12 @@ export function renderReleaseNotesMarkdown(params: { versionLabel?: string; body
 	}
 
 	body = ensureAllowedSections(body)
+	body = sortBulletsWithinSections(body)
 	if (!body) {
 		// If the model returned only bullets (or only filtered content), recover as Highlights.
 		const highlights = wrapBulletsAsHighlights(sanitizeBody(stripLeadingTopHeadings(params.bodyMarkdown ?? "")))
 		body = highlights
+		body = sortBulletsWithinSections(body)
 	}
 
 	if (!summary && body) {
