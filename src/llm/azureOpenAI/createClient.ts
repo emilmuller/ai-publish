@@ -51,7 +51,15 @@ import {
 	schemaVersionBumpOutput
 } from "./schemas"
 import { buildSystemPrompt, formatDiffSummary } from "./prompt"
-import { logInfo, traceLLMEnabled, logLLMOutput } from "../../util/logger"
+import {
+	logInfo,
+	traceLLMEnabled,
+	traceLLMOutputEnabled,
+	logLLMOutput,
+	logLLMStreamStart,
+	logLLMStreamChunk,
+	logLLMStreamEnd
+} from "../../util/logger"
 
 function formatChangelogModelForVersionBump(model: ChangelogModel): string {
 	function section(name: string, bullets: { text: string; evidenceNodeIds: string[] }[]): string {
@@ -95,12 +103,26 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				maxTokens: params?.maxTokens ?? null
 			})
 		}
+		const shouldStream = traceLLMOutputEnabled()
+		let didStream = false
+		const onToken = shouldStream
+			? (chunk: string) => {
+					if (!didStream) {
+						logLLMStreamStart(`azure:${label}`)
+						didStream = true
+					}
+					logLLMStreamChunk(chunk)
+			  }
+			: undefined
+
 		const res = await azureChatCompletionWithMeta(cfg, {
 			messages,
 			temperature: 0,
 			maxTokens: params?.maxTokens,
-			responseFormat: format
+			responseFormat: format,
+			onToken
 		})
+		if (didStream) logLLMStreamEnd()
 		const content = res.content
 		if (trace) {
 			logInfo("llm:response", {
@@ -111,7 +133,7 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				usage: res.usage ?? null
 			})
 		}
-		logLLMOutput(`azure:${label}`, content)
+		if (!didStream) logLLMOutput(`azure:${label}`, content)
 		try {
 			return parseJsonObject<T>(label, content)
 		} catch (e) {
@@ -130,13 +152,27 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				finishReason: res.finishReason ?? null,
 				usage: res.usage ?? null
 			})
+			const shouldStreamRetry = traceLLMOutputEnabled()
+			let didStreamRetry = false
+			const onTokenRetry = shouldStreamRetry
+				? (chunk: string) => {
+						if (!didStreamRetry) {
+							logLLMStreamStart(`azure:${label}:retry`)
+							didStreamRetry = true
+						}
+						logLLMStreamChunk(chunk)
+				  }
+				: undefined
+
 			const res2 = await azureChatCompletionWithMeta(cfg, {
 				messages,
 				temperature: 0,
 				maxTokens: bumped,
-				responseFormat: format
+				responseFormat: format,
+				onToken: onTokenRetry
 			})
-			logLLMOutput(`azure:${label}:retry`, res2.content)
+			if (didStreamRetry) logLLMStreamEnd()
+			if (!didStreamRetry) logLLMOutput(`azure:${label}:retry`, res2.content)
 			return parseJsonObject<T>(label, res2.content)
 		}
 	}

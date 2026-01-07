@@ -21,6 +21,8 @@ export type AzureChatCompletionResult = {
 	usage?: AzureChatCompletionUsage
 }
 
+type StreamTokenHandler = (chunk: string) => void
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -122,6 +124,7 @@ async function azureResponsesCompletion(
 		temperature?: number
 		maxTokens?: number
 		responseFormat?: any
+		onToken?: StreamTokenHandler
 	}
 ): Promise<AzureChatCompletionResult> {
 	const envMaxTokens = maxTokensFromEnv()
@@ -148,6 +151,62 @@ async function azureResponsesCompletion(
 		apiVersion: responsesApiVersion,
 		requestTimeoutMs: cfg.requestTimeoutMs
 	})
+
+	// Best-effort token streaming via the OpenAI SDK if available.
+	if (params.onToken && client?.responses && typeof client.responses.stream === "function") {
+		const stream = client.responses.stream({
+			model: cfg.deployment,
+			...(systemInstructions ? { instructions: systemInstructions } : {}),
+			input: inputMessages,
+			max_output_tokens: maxTokens,
+			...(reasoningEffortFromEnv() !== undefined ? { reasoning: { effort: reasoningEffortFromEnv() } } : {}),
+			...(textFormat ? { text: { format: textFormat } } : {})
+		})
+		try {
+			for await (const ev of stream as any) {
+				const t = typeof ev?.type === "string" ? ev.type : ""
+				// Most OpenAI SDK streams emit delta events for output_text.
+				const delta = typeof ev?.delta === "string" ? ev.delta : undefined
+				if (delta && (t.includes("output_text") || t.endsWith(".delta") || t.includes("delta"))) {
+					params.onToken(delta)
+					continue
+				}
+				const text = typeof ev?.text === "string" ? ev.text : undefined
+				if (text && (t.includes("output_text") || t.endsWith(".delta"))) {
+					params.onToken(text)
+				}
+			}
+		} finally {
+			// Ensure the stream is cleaned up if supported.
+			if (typeof (stream as any)?.close === "function") {
+				try {
+					;(stream as any).close()
+				} catch {
+					// ignore
+				}
+			}
+		}
+		const final =
+			typeof (stream as any)?.finalResponse === "function" ? await (stream as any).finalResponse() : null
+		if (final) {
+			const json = final as any
+			const text = parseResponsesOutputText(json)
+			return {
+				content: text,
+				model: typeof json?.model === "string" ? json.model : undefined,
+				finishReason: typeof json?.status === "string" ? json.status : undefined,
+				usage: {
+					outputTokens: typeof json?.usage?.output_tokens === "number" ? json.usage.output_tokens : undefined,
+					reasoningTokens:
+						typeof json?.usage?.output_tokens_details?.reasoning_tokens === "number"
+							? json.usage.output_tokens_details.reasoning_tokens
+							: undefined
+				}
+			}
+		}
+		// Fall back to non-streaming if we cannot get a final response.
+	}
+
 	const response = await client.responses.create({
 		model: cfg.deployment,
 		...(systemInstructions ? { instructions: systemInstructions } : {}),
@@ -198,6 +257,90 @@ async function azureResponsesCompletion(
 	}
 }
 
+async function readChatCompletionsSSE(
+	res: Response,
+	onToken: StreamTokenHandler | undefined
+): Promise<Pick<AzureChatCompletionResult, "content" | "model" | "finishReason" | "usage">> {
+	if (!res.body) throw new Error("Azure OpenAI stream response missing body")
+	const reader = res.body.getReader()
+	const decoder = new TextDecoder("utf-8")
+	let buffer = ""
+	let content = ""
+	let model: string | undefined
+	let finishReason: string | undefined
+	let usage: AzureChatCompletionUsage | undefined
+
+	function handleEventData(data: string): boolean {
+		const trimmed = data.trim()
+		if (!trimmed) return false
+		if (trimmed === "[DONE]") return true
+		let json: any
+		try {
+			json = JSON.parse(trimmed)
+		} catch {
+			return false
+		}
+		if (typeof json?.model === "string") model = json.model
+		const choice = json?.choices?.[0]
+		if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason
+		// Some providers can include usage in the final chunk.
+		if (json?.usage && typeof json.usage === "object") {
+			usage = {
+				promptTokens:
+					typeof json.usage.prompt_tokens === "number" ? json.usage.prompt_tokens : usage?.promptTokens,
+				completionTokens:
+					typeof json.usage.completion_tokens === "number"
+						? json.usage.completion_tokens
+						: usage?.completionTokens,
+				totalTokens: typeof json.usage.total_tokens === "number" ? json.usage.total_tokens : usage?.totalTokens
+			}
+		}
+		const delta = choice?.delta
+		let piece: unknown = delta?.content
+		if (Array.isArray(piece)) {
+			piece = piece
+				.map((p: any) => {
+					if (typeof p === "string") return p
+					if (p && typeof p.text === "string") return p.text
+					return ""
+				})
+				.join("")
+		}
+		if (typeof piece === "string" && piece) {
+			content += piece
+			onToken?.(piece)
+		}
+		return false
+	}
+
+	while (true) {
+		const { value, done } = await reader.read()
+		if (done) break
+		buffer += decoder.decode(value, { stream: true })
+		let idx: number
+		while ((idx = buffer.indexOf("\n\n")) !== -1) {
+			const rawEvent = buffer.slice(0, idx)
+			buffer = buffer.slice(idx + 2)
+			const lines = rawEvent.split(/\r?\n/)
+			const dataLines = lines
+				.map((l) => l.trimEnd())
+				.filter((l) => l.startsWith("data:"))
+				.map((l) => l.slice("data:".length).trimStart())
+			const data = dataLines.join("\n")
+			if (handleEventData(data)) {
+				try {
+					await reader.cancel()
+				} catch {
+					// ignore
+				}
+				return { content, model, finishReason, usage }
+			}
+		}
+	}
+
+	return { content, model, finishReason, usage }
+}
+
 function getRetryAfterMs(res: Response): number | null {
 	const raw = res.headers.get("retry-after")
 	if (!raw) return null
@@ -228,6 +371,7 @@ async function azureChatCompletionInner(
 		temperature?: number
 		maxTokens?: number
 		responseFormat?: any
+		onToken?: StreamTokenHandler
 	},
 	allowNoFormatRetry: boolean
 ): Promise<AzureChatCompletionResult> {
@@ -267,6 +411,7 @@ async function azureChatCompletionInner(
 		return {
 			messages: params.messages,
 			temperature: params.temperature ?? 0,
+			...(params.onToken ? { stream: true } : {}),
 			...(withFormat && params.responseFormat ? { response_format: params.responseFormat } : {})
 		}
 	}
@@ -340,6 +485,19 @@ async function azureChatCompletionInner(
 		throw new Error(`Azure OpenAI request failed (${res.status}): ${msg}`)
 	}
 
+	// Streamed response: parse SSE and return buffered content.
+	if (params.onToken) {
+		const { content, model, finishReason, usage } = await readChatCompletionsSSE(res, params.onToken)
+		if (typeof content !== "string" || !content.trim()) {
+			if (allowNoFormatRetry && params.responseFormat) {
+				debugLog("azureChatCompletion:streamRetryWithoutResponseFormat")
+				return await azureChatCompletionInner(cfg, { ...params, responseFormat: undefined }, false)
+			}
+			throw new Error("Azure OpenAI streamed response missing message content")
+		}
+		return { content, model, finishReason, usage }
+	}
+
 	const json = (await res.json()) as any
 	const choice = json?.choices?.[0]
 	const message = choice?.message
@@ -409,6 +567,7 @@ export async function azureChatCompletion(
 		temperature?: number
 		maxTokens?: number
 		responseFormat?: any
+		onToken?: StreamTokenHandler
 	}
 ): Promise<string> {
 	const res = await azureChatCompletionInner(cfg, params, true)
@@ -422,6 +581,7 @@ export async function azureChatCompletionWithMeta(
 		temperature?: number
 		maxTokens?: number
 		responseFormat?: any
+		onToken?: StreamTokenHandler
 	}
 ): Promise<AzureChatCompletionResult> {
 	return await azureChatCompletionInner(cfg, params, true)

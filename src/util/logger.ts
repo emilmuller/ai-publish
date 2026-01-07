@@ -95,3 +95,30 @@ export function logLLMOutput(event: string, content: string, opts?: { maxChars?:
 	// eslint-disable-next-line no-console
 	console.error(`[ai-publish][llm-output] ${event}\n${shown}`)
 }
+
+export function logLLMStreamStart(event: string): void {
+	if (!traceLLMOutputEnabled()) return
+	// eslint-disable-next-line no-console
+	console.error(`[ai-publish][llm-stream] ${event}`)
+}
+
+export function logLLMStreamChunk(chunk: string): void {
+	if (!traceLLMOutputEnabled()) return
+	if (!chunk) return
+	try {
+		process.stderr.write(chunk)
+	} catch {
+		// eslint-disable-next-line no-console
+		console.error(chunk)
+	}
+}
+
+export function logLLMStreamEnd(): void {
+	if (!traceLLMOutputEnabled()) return
+	try {
+		process.stderr.write("\n")
+	} catch {
+		// eslint-disable-next-line no-console
+		console.error("")
+	}
+}
