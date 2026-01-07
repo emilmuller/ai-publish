@@ -1,4 +1,15 @@
 # Changelog
+## [1.1.0] - 2026-01-07
+
+### Added
+- Introduced shared hunk-budget helper `fetchHunksWithBudget` to chunk `getDiffHunks` calls and skip oversize hunks without failing runs.
+
+### Changed
+- Updated changelog pipeline to use shared hunk-budget helper and shared `remainingBytes` state.
+- Updated release-notes pipeline to share the same hunk-budgeting behavior via `fetchHunksWithBudget`.
+- Canonicalized release-notes section order and limited output to a fixed set of allowed sections while keeping the public API.
+- Made release-notes bullet lists deterministically sorted within each section, including synthesized bodies.
+- Adjusted Vitest worker configuration to use a small threads-based pool on Windows.
 ## [1.0.0] - 2026-01-07
 
 ### Added
