@@ -1,4 +1,5 @@
 import type { AzureOpenAIConfig } from "./config"
+import { assertAzureApiVersionSupportsStructuredOutputs } from "./config"
 import { getAzureOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
@@ -204,6 +205,13 @@ async function azureChatCompletionInner(
 ): Promise<string> {
 	if (useResponsesApiFromEnv()) {
 		return await azureResponsesCompletion(cfg, params)
+	}
+
+	// Structured Outputs (response_format json_schema) requires a sufficiently new Azure API version.
+	// Older api versions may silently ignore response_format and return free-form text, causing
+	// downstream JSON parsing to fail intermittently.
+	if (params.responseFormat?.type === "json_schema") {
+		assertAzureApiVersionSupportsStructuredOutputs(cfg.apiVersion)
 	}
 
 	// Azure OpenAI (data-plane) Chat Completions:

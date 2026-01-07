@@ -40,7 +40,7 @@ describe("Integration: Azure generates release notes (local-only)", () => {
 			// eslint-disable-next-line no-console
 			console.log("\n--- AZURE RELEASE NOTES MARKDOWN ---\n" + res.markdown + "\n")
 
-			expect(res.markdown).toMatch(/# Release Notes/)
+			expect(res.markdown).toMatch(/^##\s+(v\d+\.\d+\.\d+|Unreleased)\b/m)
 			expect(res.releaseNotes.markdown.trim().length).toBeGreaterThan(0)
 		},
 		180_000

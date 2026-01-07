@@ -57,4 +57,47 @@ describe("breaking change heuristics", () => {
 			true
 		)
 	})
+
+	test("detects breaking TS type change when internal type is re-exported", async () => {
+		const { dir } = await makeTempGitRepo()
+		await commitChange(
+			dir,
+			"src/index.ts",
+			[
+				"// Public entrypoint",
+				"export { configure } from './internal/configure'",
+				"export type { ConfigureOptions } from './internal/configure'",
+				""
+			].join("\n"),
+			"add public entrypoint"
+		)
+		await commitChange(
+			dir,
+			"src/internal/configure.ts",
+			[
+				"export type ConfigureOptions = { timeoutMs?: number }",
+				"export function configure(_opts: ConfigureOptions): void { /* noop */ }",
+				""
+			].join("\n"),
+			"add internal configure"
+		)
+		const base = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+
+		await commitChange(
+			dir,
+			"src/internal/configure.ts",
+			[
+				"export type ConfigureOptions = { timeoutMs: number }",
+				"export function configure(_opts: ConfigureOptions): void { /* noop */ }",
+				""
+			].join("\n"),
+			"make timeoutMs required"
+		)
+
+		const idx = await indexDiff({ base, cwd: dir })
+		const manifest = JSON.parse(await readFile(idx.manifestPath, "utf8")) as DiffIndexManifest
+		const evidence = buildEvidenceFromManifest(manifest)
+		const bullets = await detectBreakingChanges({ base, cwd: dir, evidence })
+		expect(bullets.some((b) => /ConfigureOptions/i.test(b.text) && /timeoutMs/i.test(b.text))).toBe(true)
+	})
 })

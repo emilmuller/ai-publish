@@ -17,6 +17,7 @@ import { listRepoFiles } from "../repo/listRepoFiles"
 import { runGitOrThrow } from "../git/runGit"
 import { getCommitContext } from "../git/getCommitContext"
 import { renderKeepAChangelogMarkdown } from "../changelog/renderKeepAChangelog"
+import { detectBreakingChanges } from "../changelog/breaking"
 import { logDebug, logInfo, traceToolsEnabled } from "../util/logger"
 
 function debugEnabled(): boolean {
@@ -484,6 +485,20 @@ export async function runChangelogPipeline(params: {
 		fixed: repairBullets(editorial.fixed),
 		removed: repairBullets(editorial.removed),
 		internalTooling: repairBullets(editorial.internalTooling)
+	}
+
+	// Deterministic breaking-change heuristics (evidence-backed).
+	// This reduces dependence on the LLM correctly flagging breaking changes in every run.
+	try {
+		const heuristicBreaking = await detectBreakingChanges({ base: params.base, cwd, evidence })
+		if (heuristicBreaking.length) {
+			repairedEditorial.breakingChanges = repairBullets([
+				...repairedEditorial.breakingChanges,
+				...heuristicBreaking
+			])
+		}
+	} catch (e) {
+		debugLog("changelogPipeline:heuristicBreaking:failed", { error: (e as Error)?.message ?? String(e) })
 	}
 
 	function referencedEvidenceNodeIds(

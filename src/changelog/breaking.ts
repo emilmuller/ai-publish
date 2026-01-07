@@ -2,6 +2,8 @@ import type { ChangelogBullet, EvidenceNode } from "./types"
 import type { DiffHunk } from "../diff/types"
 import { getDiffHunks } from "../diff/getDiffHunks"
 import { compareStrings } from "../util/compare"
+import { readFileSync } from "node:fs"
+import { join, posix as pathPosix } from "node:path"
 
 function stableBullet(text: string, evidenceNodeIds: string[]): ChangelogBullet {
 	return { text, evidenceNodeIds: [...evidenceNodeIds].sort() }
@@ -133,6 +135,78 @@ function detectMajorBumpsFromPackageJsonHunks(
 	return bumps
 }
 
+function toPosixPath(p: string): string {
+	return p.replace(/\\/g, "/")
+}
+
+function stripKnownModuleExt(p: string): string {
+	return p.replace(/\.(ts|js|mjs|cjs)$/i, "")
+}
+
+function escapeRegExp(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function readTextFileOrNull(cwd: string, relPath: string): string | null {
+	try {
+		return readFileSync(join(cwd, relPath), "utf8")
+	} catch {
+		return null
+	}
+}
+
+function moduleSpecifiersFromEntrypoint(entrypointPath: string, targetFilePath: string): string[] {
+	const entryPosix = toPosixPath(entrypointPath)
+	const targetPosix = stripKnownModuleExt(toPosixPath(targetFilePath))
+	const entryDir = pathPosix.dirname(entryPosix)
+	let rel = pathPosix.relative(entryDir, targetPosix)
+	if (!rel.startsWith(".")) rel = "./" + rel
+	return [rel]
+}
+
+function entrypointReferencesFile(entrypointText: string, entrypointPath: string, targetFilePath: string): boolean {
+	const specs = moduleSpecifiersFromEntrypoint(entrypointPath, targetFilePath)
+	for (const spec of specs) {
+		// Conservative: only treat it as a re-export when it appears as a quoted module specifier.
+		const r = new RegExp(`[\\s(]from\\s+['\"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['\"]`)
+		if (r.test(entrypointText)) return true
+		// Allow CommonJS require as a fallback signal.
+		const r2 = new RegExp(`require\\(\\s*['\"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['\"]\\s*\\)`)
+		if (r2.test(entrypointText)) return true
+	}
+	return false
+}
+
+function detectTsOptionalToRequiredProperty(hunks: DiffHunk[]): { typeName: string | null; props: string[] } {
+	const removedOptional = new Set<string>()
+	const addedRequired = new Set<string>()
+	let typeName: string | null = null
+
+	for (const h of hunks) {
+		for (const raw of h.lines) {
+			if (!(raw.startsWith("-") || raw.startsWith("+"))) continue
+			if (raw.startsWith("---") || raw.startsWith("+++")) continue
+			const t = raw.slice(1)
+			const tn = /\bexport\s+type\s+([A-Za-z_$][\w$]*)\s*=/.exec(t)
+			if (tn) typeName = tn[1]!
+
+			if (raw.startsWith("-")) {
+				const m = /\b([A-Za-z_$][\w$]*)\s*\?:/.exec(t)
+				if (m) removedOptional.add(m[1]!)
+			}
+			if (raw.startsWith("+")) {
+				// Capture required properties, excluding optional ones.
+				if (/\?:/.test(t)) continue
+				const m = /\b([A-Za-z_$][\w$]*)\s*:\s*/.exec(t)
+				if (m) addedRequired.add(m[1]!)
+			}
+		}
+	}
+
+	const props = [...removedOptional].filter((p) => addedRequired.has(p)).sort(compareStrings)
+	return { typeName, props }
+}
+
 export async function detectBreakingChanges(params: {
 	base: string
 	evidence: Record<string, EvidenceNode>
@@ -168,6 +242,47 @@ export async function detectBreakingChanges(params: {
 
 	// Content-based checks (still conservative, but evidence-backed).
 	const entrypoints = new Set(["src/index.ts", "src/index.js", "src/index.mjs", "src/index.cjs"])
+	const entrypointTextByPath = new Map<string, string>()
+	if (params.cwd) {
+		for (const p of entrypoints) {
+			const text = readTextFileOrNull(params.cwd, p)
+			if (typeof text === "string") entrypointTextByPath.set(p, text)
+		}
+	}
+
+	// Detect type-breaking changes in internal modules that are re-exported by a public entrypoint.
+	// This is conservative and evidence-backed: we only emit when we see a clear optional->required signal.
+	if (params.cwd) {
+		for (const node of nodes) {
+			if (node.surface === "public-api" || node.surface === "config") continue
+			if (node.hunkIds.length === 0) continue
+			if (node.isBinary) continue
+
+			let reexportedBy: string | null = null
+			for (const [entryPath, entryText] of entrypointTextByPath.entries()) {
+				if (entrypointReferencesFile(entryText, entryPath, node.filePath)) {
+					reexportedBy = entryPath
+					break
+				}
+			}
+			if (!reexportedBy) continue
+
+			const hunks = await getDiffHunks({
+				base: params.base,
+				hunkIds: node.hunkIds,
+				cwd: params.cwd,
+				maxTotalBytes: 256 * 1024
+			})
+			const sig = detectTsOptionalToRequiredProperty(hunks)
+			if (!sig.props.length) continue
+			const prop = sig.props[0]!
+			const typeLabel = sig.typeName ? `\`${sig.typeName}\`` : "a public type"
+			bullets.push(
+				stableBullet(`Breaking: made ${typeLabel}.${prop} required (re-exported by ${reexportedBy})`, [node.id])
+			)
+		}
+	}
+
 	for (const node of nodes) {
 		if (!entrypoints.has(node.filePath)) continue
 		if (node.hunkIds.length === 0) continue

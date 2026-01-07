@@ -6,6 +6,31 @@ export type AzureOpenAIConfig = {
 	requestTimeoutMs: number
 }
 
+const MIN_STRUCTURED_OUTPUTS_API_VERSION_NUM = 20240801
+
+function azureApiVersionToNumber(apiVersion: string): number | null {
+	const m = /^(\d{4})-(\d{2})-(\d{2})/i.exec(apiVersion.trim())
+	if (!m) return null
+	const y = Number(m[1])
+	const mo = Number(m[2])
+	const d = Number(m[3])
+	if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null
+	return y * 10000 + mo * 100 + d
+}
+
+export function assertAzureApiVersionSupportsStructuredOutputs(apiVersion: string): void {
+	const n = azureApiVersionToNumber(apiVersion)
+	if (n === null) {
+		throw new Error(`Invalid AZURE_OPENAI_API_VERSION: ${apiVersion}. Expected a value like 2024-08-01-preview.`)
+	}
+	if (n < MIN_STRUCTURED_OUTPUTS_API_VERSION_NUM) {
+		throw new Error(
+			`Azure OpenAI Structured Outputs (response_format json_schema) requires AZURE_OPENAI_API_VERSION ` +
+				`to be 2024-08-01-preview or later (current: ${apiVersion}).`
+		)
+	}
+}
+
 function requireEnv(name: string): string {
 	const v = process.env[name]
 	if (!v) throw new Error(`Missing required env var: ${name}`)
