@@ -63,6 +63,7 @@ If publishing fails, you do not end up with a pushed release tag that doesn’t 
 -   Runs the project-type publish step first.
 -   After publish succeeds, it:
     -   creates a **release commit** containing only the prepared release paths
+        -   commit message: `chore(release): v<next>`
     -   creates an **annotated tag** `v<next>` pointing at that commit
     -   pushes the current branch and the tag to the remote (default `origin`)
 -   Refuses if your working tree has changes outside the release output paths recorded by `prepublish`.
