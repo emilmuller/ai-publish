@@ -16,11 +16,73 @@ function stripCodeFences(text: string): string {
 	return m ? m[1].trim() : t
 }
 
+function extractFirstJsonValue(text: string): string | null {
+	// Best-effort recovery for providers that occasionally emit extra text, multiple JSON
+	// objects, or truncated output. We scan for the first balanced JSON object/array.
+	const s = text.trim()
+	let start = -1
+	let openChar: "{" | "[" | null = null
+	for (let i = 0; i < s.length; i++) {
+		const c = s[i]
+		if (c === "{" || c === "[") {
+			start = i
+			openChar = c as any
+			break
+		}
+	}
+	if (start < 0 || !openChar) return null
+
+	const closeChar = openChar === "{" ? "}" : "]"
+	let depth = 0
+	let inString = false
+	let escaped = false
+	for (let i = start; i < s.length; i++) {
+		const c = s[i]
+		if (inString) {
+			if (escaped) {
+				escaped = false
+				continue
+			}
+			if (c === "\\") {
+				escaped = true
+				continue
+			}
+			if (c === '"') {
+				inString = false
+			}
+			continue
+		}
+
+		if (c === '"') {
+			inString = true
+			continue
+		}
+
+		if (c === openChar) depth++
+		else if (c === closeChar) {
+			depth--
+			if (depth === 0) {
+				return s.slice(start, i + 1)
+			}
+		}
+	}
+
+	return null
+}
+
 export function parseJsonObject<T>(label: string, text: string): T {
 	const raw = stripCodeFences(text)
 	try {
 		return JSON.parse(raw) as T
 	} catch {
+		const recovered = extractFirstJsonValue(raw)
+		if (recovered) {
+			try {
+				return JSON.parse(recovered) as T
+			} catch {
+				// fall through to error
+			}
+		}
 		throw new Error(`${label}: expected JSON but got: ${raw.slice(0, 400)}`)
 	}
 }

@@ -376,7 +376,10 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 					"Semantic pass request",
 					conversation,
 					jsonSchemaResponseFormat("semantic_request", schemaSemanticRequest),
-					{ maxTokens: 4096 }
+					// Keep this small: the request should only choose a handful of hunks/snippets/searches per round.
+					// Larger budgets encourage the model to enumerate huge request arrays, which can hit provider
+					// output limits and get truncated mid-JSON.
+					{ maxTokens: 600 }
 				)
 
 				const requestHunkIds = coerceStringArray(req.requestHunkIds)
