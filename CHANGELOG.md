@@ -1,4 +1,9 @@
 # Changelog
+## [2.0.0] - 2026-01-07
+
+### Changed
+- **BREAKING:** Renamed the npm publish script to release, which may require updating any automation or documentation that calls the old script name.
+- Updated documentation to reflect the new release script name and usage.
 ## [1.2.0] - 2026-01-07
 
 ### Added
