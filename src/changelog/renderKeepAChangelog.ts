@@ -31,8 +31,10 @@ function shouldDropAsInternalFileBullet(text: string): boolean {
 	return false
 }
 
-function isInternalSurface(surface: string | undefined): boolean {
-	return surface === "internal" || surface === "tests" || surface === "infra"
+function shouldOmitFromConsumerChangelog(surface: string | undefined): boolean {
+	// Keep the output Keep a Changelog–shaped but avoid overly empty entries.
+	// We still omit pure tests/infra changes to reduce noise.
+	return surface === "tests" || surface === "infra"
 }
 
 function formatBullets(model: ChangelogModel, bullets: ChangelogBullet[], opts?: { prefix?: string }): string[] {
@@ -40,8 +42,8 @@ function formatBullets(model: ChangelogModel, bullets: ChangelogBullet[], opts?:
 	for (const b of bullets) {
 		const primaryNodeId = (b.evidenceNodeIds ?? [])[0]
 		const primaryNode = primaryNodeId ? model.evidence?.[primaryNodeId] : undefined
-		if (primaryNode && isInternalSurface(primaryNode.surface)) {
-			// Consumer-facing changelog: omit internal/test/infra-only changes.
+		if (primaryNode && shouldOmitFromConsumerChangelog(primaryNode.surface)) {
+			// Consumer-facing changelog: omit tests/infra-only changes.
 			continue
 		}
 
@@ -63,7 +65,8 @@ export function renderKeepAChangelogMarkdown(params: {
 
 	const breaking = formatBullets(params.model, params.model.breakingChanges, { prefix: "**BREAKING:** " })
 	const added = formatBullets(params.model, params.model.added)
-	const changed = [...breaking, ...formatBullets(params.model, params.model.changed)]
+	const internalTooling = formatBullets(params.model, params.model.internalTooling)
+	const changed = [...breaking, ...formatBullets(params.model, params.model.changed), ...internalTooling]
 	const fixed = formatBullets(params.model, params.model.fixed)
 	const removed = formatBullets(params.model, params.model.removed)
 
