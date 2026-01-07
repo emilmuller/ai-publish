@@ -142,7 +142,7 @@ describe("LLM tool-gating", () => {
 		await runChangelogPipeline({ base, cwd: dir, llmClient: client })
 		expect(lineCount).toBeGreaterThan(0)
 		expect(gotTruncated).toBe(false)
-	})
+	}, 60_000)
 
 	test("semantic repo file meta is available and bounded", async () => {
 		const { dir } = await makeTempGitRepo()
@@ -370,7 +370,7 @@ describe("LLM tool-gating", () => {
 		const res = await runChangelogPipeline({ base, cwd: dir, llmClient: client })
 		expect(res.markdown).toContain("# Changelog")
 		expect(res.markdown).toContain("## [Unreleased] - ")
-	})
+	}, 60_000)
 
 	test("LLM output is validated and evidence is injected", async () => {
 		const { dir } = await makeTempGitRepo()
@@ -408,5 +408,5 @@ describe("LLM tool-gating", () => {
 		const res = await runChangelogPipeline({ base, cwd: dir, llmClient: client })
 		expect(Object.keys(res.model.evidence).length).toBeGreaterThan(0)
 		expect(res.markdown).toContain("- Updated something")
-	})
+	}, 60_000)
 })

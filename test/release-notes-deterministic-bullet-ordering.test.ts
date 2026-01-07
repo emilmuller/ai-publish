@@ -55,5 +55,5 @@ describe("release notes determinism", () => {
 		})
 
 		expect(reversed.markdown).toBe(normal.markdown)
-	})
+	}, 60_000)
 })

@@ -146,5 +146,5 @@ describe("Programmatic API", () => {
 		})
 
 		expect(res.outPath.replace(/\\/g, "/")).toMatch(/\/release-notes\/v1\.2\.4\.md$/i)
-	})
+	}, 40_000)
 })

@@ -1,8 +1,9 @@
-import { indexDiff, getDiffHunks } from "../diff"
+import { indexDiff } from "../diff"
+import { fetchHunksWithBudget } from "./hunkBudget"
 import { getResolvedInstructions } from "../instructions/resolveInstructions"
 import type { LLMClient } from "../llm/types"
 import type { ChangelogModel } from "../changelog/types"
-import type { DiffIndexManifest, DiffHunk } from "../diff/types"
+import type { DiffIndexManifest } from "../diff/types"
 import { buildEvidenceFromManifest } from "../changelog/evidence"
 import { validateChangelogModel } from "../changelog/validate"
 import { compareStrings } from "../util/compare"
@@ -60,11 +61,6 @@ export async function runChangelogPipeline(params: {
 		// Deterministic (commit date), date portion: YYYY-MM-DD
 		const out = await runGitOrThrow(["show", "-s", "--format=%cs", headSha], { cwd })
 		return out.trim()
-	}
-
-	function isMaxTotalBytesExceededError(err: unknown): boolean {
-		const msg = (err as any)?.message
-		return typeof msg === "string" && msg.includes("Requested hunks exceed maxTotalBytes")
 	}
 
 	// Always build the diff index first; it is the queryable authority.
@@ -154,55 +150,19 @@ export async function runChangelogPipeline(params: {
 				if (!allowed.length) return []
 				if (remainingBytes <= 0) throw new Error("LLM hunk budget exhausted")
 
-				// The model may over-request hunks. Enforce the global budget by
-				// deterministically downsizing/chunking requests instead of failing the run.
-				const collected: DiffHunk[] = []
-				let cursor = 0
+				const state = { remainingBytes }
+				const collected = await fetchHunksWithBudget({
+					base: params.base,
+					cwd,
+					allowedHunkIds,
+					state,
+					hunkIds: allowed,
+					maxChunk: 12
+				})
 
-				while (cursor < allowed.length) {
-					if (remainingBytes <= 0) break
-					let chunkSize = Math.min(12, allowed.length - cursor)
+				// sync remainingBytes back from the mutable state
+				remainingBytes = state.remainingBytes
 
-					while (chunkSize > 0) {
-						const chunkIds = allowed.slice(cursor, cursor + chunkSize)
-						try {
-							const hunks = await getDiffHunks({
-								base: params.base,
-								hunkIds: chunkIds,
-								cwd,
-								maxTotalBytes: remainingBytes
-							})
-							collected.push(...hunks)
-							const used = hunks.reduce((sum: number, h: DiffHunk) => sum + (h.byteLength ?? 0), 0)
-							remainingBytes -= used
-							if (trace)
-								logInfo("tool:getDiffHunks:chunk", {
-									returned: hunks.length,
-									usedBytes: used,
-									remainingBytes
-								})
-							cursor += chunkSize
-							break
-						} catch (err) {
-							if (isMaxTotalBytesExceededError(err)) {
-								// Reduce chunk size until it fits the remaining budget.
-								if (chunkSize === 1) {
-									// Should be rare (our per-hunk storage is bounded), but don't fail the run.
-									debugLog("changelogPipeline:semantic:hunkBudgetSkip", {
-										id: chunkIds[0],
-										remainingBytes
-									})
-									if (trace) logInfo("tool:getDiffHunks:skip", { remainingBytes })
-									cursor += 1
-									break
-								}
-								chunkSize = Math.max(1, Math.floor(chunkSize / 2))
-								continue
-							}
-							throw err
-						}
-					}
-				}
 				if (trace) logInfo("tool:getDiffHunks:result", { returned: collected.length, remainingBytes })
 
 				return collected

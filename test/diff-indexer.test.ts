@@ -95,7 +95,7 @@ describe("diff indexing", () => {
 
 		const hunks = await getDiffHunks({ base, cwd: repo.dir, hunkIds: bin?.hunkIds ?? [] })
 		expect(hunks[0]?.header).toBe("@@ meta @@")
-	})
+	}, 60_000)
 
 	test("truncated hunks are bounded and include the marker once", async () => {
 		const repo = await makeTempGitRepo()

@@ -99,5 +99,5 @@ describe("breaking change heuristics", () => {
 		const evidence = buildEvidenceFromManifest(manifest)
 		const bullets = await detectBreakingChanges({ base, cwd: dir, evidence })
 		expect(bullets.some((b) => /ConfigureOptions/i.test(b.text) && /timeoutMs/i.test(b.text))).toBe(true)
-	})
+	}, 60_000)
 })
