@@ -384,4 +384,13 @@ If you change any of the following, run both `npm run test:llm-eval` and `npm ru
     -   Provide `--manifest` for `dotnet` project type.
 
 -   `Missing NuGet API key...`
+
     -   Set `AI_PUBLISH_NUGET_API_KEY` (or `NUGET_API_KEY`) before running `dotnet postpublish`.
+
+-   `Semantic pass request: expected JSON but got: ...`
+
+    -   This usually means the LLM provider returned extra text, multiple JSON objects, or truncated output due to output token limits.
+    -   ai-publish runs the semantic “tool request” phase in small batches across multiple rounds; if you still see this intermittently, enable request/response tracing to diagnose provider behavior:
+        -   `AI_PUBLISH_TRACE_LLM=1`
+        -   `AI_PUBLISH_LOG_LEVEL=debug`
+    -   On Azure, ensure `AZURE_OPENAI_API_VERSION` is `2024-08-01-preview` or later (Structured Outputs).

@@ -239,6 +239,12 @@ Important: the pipeline is LLM-driven. Preserve tool-gating so the model can onl
 Pipeline contracts (important for audits):
 
 -   The semantic pass is globally budgeted: the pipeline enforces a total hunk retrieval budget of `256 KiB` across all semantic hunk requests.
+
+Additional operational constraints (reliability):
+
+-   **Semantic request batching**: the semantic pass asks the model to _request tools_ (hunks/snippets/searches) over multiple rounds. Each round has hard per-round caps (hunks/snippets/searches) so the model cannot emit huge request payloads that risk provider truncation.
+-   **Provider truncation tolerance**: even with JSON-schema Structured Outputs, some deployments may intermittently return truncated JSON or extra text. Parsers should be tolerant where safe (e.g., best-effort parsing of the first complete JSON value) but the primary defense is keeping requests small.
+-   **Do not “fix” truncation by raising token budgets**: increasing `maxTokens` on the _semantic request_ step tends to make the model enumerate more items and can worsen truncation on deployments with strict completion caps.
 -   The changelog pipeline repairs/filters evidence references:
     -   Unknown evidence IDs are discarded.
     -   If none remain, it may infer evidence IDs conservatively from file paths mentioned in the bullet text (non-binary only).

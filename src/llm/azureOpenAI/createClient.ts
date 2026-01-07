@@ -314,6 +314,17 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 						"Semantic pass.",
 						"You may request specific hunk IDs (bounded diff evidence slices), repo file snippets (bounded HEAD context slices), snippets around a specific line (bounded HEAD context), repo file searches (bounded HEAD search results), repo path searches (bounded HEAD path matches), repo-wide searches (bounded HEAD search results across many files), repo file listings (bounded HEAD file paths), and repo file metadata (bounded HEAD metadata).",
 						"You MUST keep requests small and targeted.",
+						"You MUST request in batches. Excess items beyond per-round limits will be ignored.",
+						"Per-round limits (hard):",
+						"- requestHunkIds: <= 12",
+						"- requestFileSnippets: <= 3",
+						"- requestSnippetsAround: <= 3",
+						"- requestFileSearches: <= 3",
+						"- requestRepoPathSearches: <= 3",
+						"- requestRepoSearches: <= 3",
+						"- requestRepoFileLists: <= 2",
+						"- requestRepoFileMeta: <= 6",
+						"If you need more, set done=false and ask again next round.",
 						"You can choose hunk IDs by looking at the evidence index below.",
 						"You can choose repo file snippets when you need additional context to understand the impact of a change.",
 						"You can choose snippets-around when you know a line number and want context without doing line math.",
@@ -361,6 +372,24 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 			const seenRepoFileMeta = new Set<string>()
 			const maxRounds = 6
 
+			function takeUniqueCapped<T>(
+				items: T[],
+				cap: number,
+				keyFn: (item: T) => string,
+				seenSet: Set<string>
+			): T[] {
+				const out: T[] = []
+				for (const item of items) {
+					if (out.length >= cap) break
+					const key = keyFn(item).trim()
+					if (!key) continue
+					if (seenSet.has(key)) continue
+					seenSet.add(key)
+					out.push(item)
+				}
+				return out
+			}
+
 			for (let round = 0; round < maxRounds; round++) {
 				const req = await chatJsonStructured<{
 					requestHunkIds: unknown
@@ -392,45 +421,44 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				const requestRepoFileMeta = coerceRepoFileMetaRequests((req as any).requestRepoFileMeta)
 				const done = Boolean((req as any).done)
 
-				const unique = requestHunkIds.filter((id) => {
-					const key = id.trim()
-					if (!key) return false
-					if (seen.has(key)) return false
-					seen.add(key)
-					return true
-				})
+				const unique = takeUniqueCapped(
+					requestHunkIds.map((id) => id.trim()).filter(Boolean),
+					12,
+					(id) => id,
+					seen
+				)
 
-				const uniqueSnippets = requestFileSnippets
+				const normalizedSnippets = requestFileSnippets
 					.map((r) => ({ ...r, path: r.path.trim() }))
 					.filter((r) => !!r.path)
-					.filter((r) => {
-						const key = `${r.path}#${r.startLine}-${r.endLine}`
-						if (seenSnippet.has(key)) return false
-						seenSnippet.add(key)
-						return true
-					})
+				const uniqueSnippets = takeUniqueCapped(
+					normalizedSnippets,
+					3,
+					(r) => `${r.path}#${r.startLine}-${r.endLine}`,
+					seenSnippet
+				)
 
-				const uniqueSnippetsAround = requestSnippetsAround
+				const normalizedSnippetsAround = requestSnippetsAround
 					.map((r) => ({ ...r, path: r.path.trim() }))
 					.filter((r) => !!r.path)
-					.filter((r) => {
-						const key = `${r.path}#${r.lineNumber}::${r.contextLines ?? ""}`
-						if (seenSnippetAround.has(key)) return false
-						seenSnippetAround.add(key)
-						return true
-					})
+				const uniqueSnippetsAround = takeUniqueCapped(
+					normalizedSnippetsAround,
+					3,
+					(r) => `${r.path}#${r.lineNumber}::${r.contextLines ?? ""}`,
+					seenSnippetAround
+				)
 
-				const uniqueSearches = requestFileSearches
+				const normalizedSearches = requestFileSearches
 					.map((r) => ({ ...r, path: r.path.trim(), query: r.query.trim() }))
 					.filter((r) => !!r.path && !!r.query)
-					.filter((r) => {
-						const key = `${r.path}::${r.query}::${r.ignoreCase ? "i" : ""}::${r.maxResults ?? ""}`
-						if (seenSearch.has(key)) return false
-						seenSearch.add(key)
-						return true
-					})
+				const uniqueSearches = takeUniqueCapped(
+					normalizedSearches,
+					3,
+					(r) => `${r.path}::${r.query}::${r.ignoreCase ? "i" : ""}::${r.maxResults ?? ""}`,
+					seenSearch
+				)
 
-				const uniqueRepoSearches = requestRepoSearches
+				const normalizedRepoSearches = requestRepoSearches
 					.map((r) => ({
 						...r,
 						query: r.query.trim(),
@@ -438,21 +466,22 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 						fileExtensions: r.fileExtensions?.map((e) => e.trim()).filter(Boolean)
 					}))
 					.filter((r) => !!r.query)
-					.filter((r) => {
-						const key = [
+				const uniqueRepoSearches = takeUniqueCapped(
+					normalizedRepoSearches,
+					3,
+					(r) =>
+						[
 							r.query,
 							r.ignoreCase ? "i" : "",
 							r.pathPrefix ?? "",
 							(r.fileExtensions ?? []).join(","),
 							String(r.maxResults ?? ""),
 							String(r.maxFiles ?? "")
-						].join("::")
-						if (seenRepoSearch.has(key)) return false
-						seenRepoSearch.add(key)
-						return true
-					})
+						].join("::"),
+					seenRepoSearch
+				)
 
-				const uniqueRepoPathSearches = requestRepoPathSearches
+				const normalizedRepoPathSearches = requestRepoPathSearches
 					.map((r) => ({
 						...r,
 						query: r.query.trim(),
@@ -460,45 +489,37 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 						fileExtensions: r.fileExtensions?.map((e) => e.trim()).filter(Boolean)
 					}))
 					.filter((r) => !!r.query)
-					.filter((r) => {
-						const key = [
+				const uniqueRepoPathSearches = takeUniqueCapped(
+					normalizedRepoPathSearches,
+					3,
+					(r) =>
+						[
 							r.query,
 							r.ignoreCase ? "i" : "",
 							r.pathPrefix ?? "",
 							(r.fileExtensions ?? []).join(","),
 							String(r.maxFiles ?? "")
-						].join("::")
-						if (seenRepoPathSearch.has(key)) return false
-						seenRepoPathSearch.add(key)
-						return true
-					})
+						].join("::"),
+					seenRepoPathSearch
+				)
 
-				const uniqueRepoFileLists = requestRepoFileLists
-					.map((r) => ({
-						...r,
-						pathPrefix: r.pathPrefix?.trim(),
-						fileExtensions: r.fileExtensions?.map((e) => e.trim()).filter(Boolean)
-					}))
-					.filter((r) => {
-						const key = [
-							r.pathPrefix ?? "",
-							(r.fileExtensions ?? []).join(","),
-							String(r.maxFiles ?? "")
-						].join("::")
-						if (seenRepoFileList.has(key)) return false
-						seenRepoFileList.add(key)
-						return true
-					})
+				const normalizedRepoFileLists = requestRepoFileLists.map((r) => ({
+					...r,
+					pathPrefix: r.pathPrefix?.trim(),
+					fileExtensions: r.fileExtensions?.map((e) => e.trim()).filter(Boolean)
+				}))
+				const uniqueRepoFileLists = takeUniqueCapped(
+					normalizedRepoFileLists,
+					2,
+					(r) =>
+						[r.pathPrefix ?? "", (r.fileExtensions ?? []).join(","), String(r.maxFiles ?? "")].join("::"),
+					seenRepoFileList
+				)
 
-				const uniqueRepoFileMeta = requestRepoFileMeta
+				const normalizedRepoFileMeta = requestRepoFileMeta
 					.map((r) => ({ ...r, path: r.path.trim() }))
 					.filter((r) => !!r.path)
-					.filter((r) => {
-						const key = r.path
-						if (seenRepoFileMeta.has(key)) return false
-						seenRepoFileMeta.add(key)
-						return true
-					})
+				const uniqueRepoFileMeta = takeUniqueCapped(normalizedRepoFileMeta, 6, (r) => r.path, seenRepoFileMeta)
 
 				if (
 					done ||
