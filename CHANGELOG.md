@@ -1,4 +1,17 @@
 # Changelog
+## [1.2.0] - 2026-01-07
+
+### Added
+- Include the changelog file in the published npm package so release notes are available to consumers.
+- Document the multi-pass AI workflow and deterministic versioning behavior for easier integration and debugging.
+
+### Changed
+- Align the command-line interface with the new tag-aware base selection so changelog and release-notes output consistently compare against the previous version when the current commit is tagged.
+- Consolidate the publish workflow into a single script that builds and then runs pre- and post-publish steps in sequence for a more reliable release process.
+- Improve changelog rendering so that when all internal-only bullets are hidden, a generic performance and stability note is shown instead of leaving sections blank.
+- Update the programmatic APIs for generating changelogs and release notes to use the same tag-aware base resolution as the CLI when no explicit base is provided.
+- Refine how the base commit is chosen for versioning so that when the current commit is already tagged, the previous reachable version tag is used as the comparison point.
+- Clarify internal guidance for AI agents on evidence handling, multi-pass processing, and version bump rules to reduce operational errors.
 ## [1.1.1] - 2026-01-07
 ## [1.1.0] - 2026-01-07
 
