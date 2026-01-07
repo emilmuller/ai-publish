@@ -6,6 +6,47 @@ import { runPrepublishPipeline } from "../src/pipeline/runPrepublishPipeline"
 import { runPostpublishPipeline } from "../src/pipeline/runPostpublishPipeline"
 
 describe("postpublish pipeline", () => {
+	test("does not re-run npm publish when invoked from npm publish postpublish lifecycle", async () => {
+		const { dir } = await makeTempGitRepo()
+		const { remoteDir } = await makeBareRemoteAndAddOrigin(dir)
+
+		await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.2.3" }, null, 2) + "\n",
+			"add package"
+		)
+		await commitChange(dir, "config.yml", "name: base\n", "add config base")
+		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.2.3", tagCommit], { cwd: dir })
+		await commitChange(dir, "config.yml", "name: changed\n", "change config")
+
+		await runPrepublishPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
+
+		const prevLifecycleEvent = process.env.npm_lifecycle_event
+		const prevNpmCommand = process.env.npm_command
+		const prevNpmArgv = process.env.npm_config_argv
+		try {
+			process.env.npm_lifecycle_event = "postpublish"
+			process.env.npm_command = "publish"
+			process.env.npm_config_argv = JSON.stringify({ original: ["publish"] })
+
+			// Should succeed without trying to spawn `npm publish` (which would recurse).
+			const post = await runPostpublishPipeline({ cwd: dir, remote: "origin", projectType: "npm" })
+			expect(post.tag).toBe("v1.2.4")
+
+			const remoteTag = await gitShowRef(remoteDir, "refs/tags/v1.2.4")
+			expect(remoteTag.found).toBe(true)
+		} finally {
+			if (prevLifecycleEvent === undefined) delete process.env.npm_lifecycle_event
+			else process.env.npm_lifecycle_event = prevLifecycleEvent
+			if (prevNpmCommand === undefined) delete process.env.npm_command
+			else process.env.npm_command = prevNpmCommand
+			if (prevNpmArgv === undefined) delete process.env.npm_config_argv
+			else process.env.npm_config_argv = prevNpmArgv
+		}
+	}, 120_000)
+
 	test("pushes branch + tag only after publish succeeds", async () => {
 		const { dir } = await makeTempGitRepo()
 		const { remoteDir } = await makeBareRemoteAndAddOrigin(dir)

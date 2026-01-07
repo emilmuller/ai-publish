@@ -54,6 +54,20 @@ async function defaultPublishRunner(params: {
 	manifestPath?: string
 }): Promise<void> {
 	if (params.projectType === "npm") {
+		// If ai-publish is invoked from npm's own `postpublish` lifecycle during `npm publish`,
+		// calling `npm publish` again would recurse and publish twice.
+		//
+		// We only skip when we are confident we're in the *publish* command's lifecycle,
+		// not when a user runs `npm run postpublish` manually.
+		const lifecycleEvent = process.env.npm_lifecycle_event
+		const npmCommand = process.env.npm_command
+		const npmArgv = process.env.npm_config_argv
+		const looksLikePublishCommand =
+			npmCommand === "publish" || (typeof npmArgv === "string" && npmArgv.includes('"publish"'))
+		if (lifecycleEvent === "postpublish" && looksLikePublishCommand) {
+			return
+		}
+
 		// npm accounts with 2FA enabled may require an OTP for `npm publish`.
 		// Support providing it via env var so callers can run postpublish non-interactively.
 		const otp = process.env.AI_PUBLISH_NPM_OTP
