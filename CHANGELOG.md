@@ -1,4 +1,19 @@
-# Changelog (4b825dc642cb6eb9a060e54bf8d69288fbee4904..v0.1.0)
+# Changelog
+## [1.0.0] - 2026-01-07
+
+### Added
+- Added a Keep a Changelog–style renderer that normalizes versions and filters out internal-only changes.
+- Implemented a release-notes renderer that curates sections, normalizes version labels, and extracts summaries.
+- Introduced a centralized logging utility with environment-driven log levels and dedicated LLM tracing helpers.
+
+### Changed
+- **BREAKING:** Changed CLI and pipeline behavior for prepublish and release-notes generation, which may impact existing automation workflows.
+- **BREAKING:** Adjusted LLM client and type definitions, which may affect consumers relying on the programmatic LLM API surface.
+- Improved documentation for agents, usage, and new pipelines in AGENTS.md and README.md.
+- Refined changelog prepending logic and tests to better integrate with the new renderer and pipelines.
+- Updated prepublish and release-notes pipelines to use the new renderers and commit context, with expanded test coverage.
+- Enhanced Azure OpenAI client, HTTP, config, parsing, and prompt handling, plus OpenAI client behavior, with updated tests.
+## [0.1.0]
 
 - Add high-level programmatic API entrypoints for generating changelogs, release notes, and running pipelines.
 - Add pipeline orchestration for changelog generation, release notes, version bumping, prepublish, and postpublish workflows.

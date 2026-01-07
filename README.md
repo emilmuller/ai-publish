@@ -22,8 +22,6 @@ ai-publish requires an LLM provider for `prepublish`, `changelog`, and `release-
 
 Before running the CLI, choose a provider (`openai` or `azure`) and set the required environment variables (see the “LLM providers” section below).
 
-Most users start with OpenAI:
-
 -   OpenAI: set `OPENAI_API_KEY` and `OPENAI_MODEL`
 -   Azure OpenAI: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
 

@@ -41,7 +41,10 @@ export async function runChangelogPipeline(params: {
 	headLabel?: string
 	cwd?: string
 	llmClient: LLMClient
-	/** Optional bounded git commit message context (untrusted, non-authoritative). Off by default. */
+	/**
+	 * Optional bounded git commit message context (untrusted, non-authoritative).
+	 * CLI defaults to a bounded snippet mode; consumers may disable it.
+	 */
 	commitContext?: {
 		mode: "none" | "snippet" | "full"
 		maxCommits?: number
