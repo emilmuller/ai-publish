@@ -4,6 +4,23 @@ import { getAzureOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
+export type AzureChatCompletionUsage = {
+	/** Chat Completions API */
+	promptTokens?: number
+	completionTokens?: number
+	totalTokens?: number
+	/** Responses API */
+	outputTokens?: number
+	reasoningTokens?: number
+}
+
+export type AzureChatCompletionResult = {
+	content: string
+	model?: string
+	finishReason?: string
+	usage?: AzureChatCompletionUsage
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -106,7 +123,7 @@ async function azureResponsesCompletion(
 		maxTokens?: number
 		responseFormat?: any
 	}
-): Promise<string> {
+): Promise<AzureChatCompletionResult> {
 	const envMaxTokens = maxTokensFromEnv()
 	const requestedMaxTokens = normalizeMaxTokens(params.maxTokens)
 	const maxTokens = Math.max(envMaxTokens ?? 0, requestedMaxTokens ?? 0) || 1200
@@ -167,7 +184,18 @@ async function azureResponsesCompletion(
 		throw new Error("Azure OpenAI responses response missing output_text")
 	}
 
-	return text
+	return {
+		content: text,
+		model: typeof json?.model === "string" ? json.model : undefined,
+		finishReason: typeof json?.status === "string" ? json.status : undefined,
+		usage: {
+			outputTokens: typeof json?.usage?.output_tokens === "number" ? json.usage.output_tokens : undefined,
+			reasoningTokens:
+				typeof json?.usage?.output_tokens_details?.reasoning_tokens === "number"
+					? json.usage.output_tokens_details.reasoning_tokens
+					: undefined
+		}
+	}
 }
 
 function getRetryAfterMs(res: Response): number | null {
@@ -202,7 +230,7 @@ async function azureChatCompletionInner(
 		responseFormat?: any
 	},
 	allowNoFormatRetry: boolean
-): Promise<string> {
+): Promise<AzureChatCompletionResult> {
 	if (useResponsesApiFromEnv()) {
 		return await azureResponsesCompletion(cfg, params)
 	}
@@ -361,7 +389,17 @@ async function azureChatCompletionInner(
 		throw new Error(`Azure OpenAI response missing message content${finish}`)
 	}
 
-	return content
+	return {
+		content,
+		model: typeof json?.model === "string" ? json.model : undefined,
+		finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
+		usage: {
+			promptTokens: typeof json?.usage?.prompt_tokens === "number" ? json.usage.prompt_tokens : undefined,
+			completionTokens:
+				typeof json?.usage?.completion_tokens === "number" ? json.usage.completion_tokens : undefined,
+			totalTokens: typeof json?.usage?.total_tokens === "number" ? json.usage.total_tokens : undefined
+		}
+	}
 }
 
 export async function azureChatCompletion(
@@ -373,5 +411,18 @@ export async function azureChatCompletion(
 		responseFormat?: any
 	}
 ): Promise<string> {
+	const res = await azureChatCompletionInner(cfg, params, true)
+	return res.content
+}
+
+export async function azureChatCompletionWithMeta(
+	cfg: AzureOpenAIConfig,
+	params: {
+		messages: ChatMessage[]
+		temperature?: number
+		maxTokens?: number
+		responseFormat?: any
+	}
+): Promise<AzureChatCompletionResult> {
 	return await azureChatCompletionInner(cfg, params, true)
 }

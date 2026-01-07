@@ -24,7 +24,7 @@ import type {
 import type { AzureOpenAIConfig } from "./config"
 import { toConfigFromEnv } from "./config"
 import type { ChatMessage } from "./http"
-import { azureChatCompletion } from "./http"
+import { azureChatCompletionWithMeta } from "./http"
 import {
 	assertBulletArray,
 	assertString,
@@ -95,17 +95,50 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				maxTokens: params?.maxTokens ?? null
 			})
 		}
-		const content = await azureChatCompletion(cfg, {
+		const res = await azureChatCompletionWithMeta(cfg, {
 			messages,
 			temperature: 0,
 			maxTokens: params?.maxTokens,
 			responseFormat: format
 		})
+		const content = res.content
 		if (trace) {
-			logInfo("llm:response", { provider: "azure", label, chars: content.length })
+			logInfo("llm:response", {
+				provider: "azure",
+				label,
+				chars: content.length,
+				finishReason: res.finishReason ?? null,
+				usage: res.usage ?? null
+			})
 		}
 		logLLMOutput(`azure:${label}`, content)
-		return parseJsonObject<T>(label, content)
+		try {
+			return parseJsonObject<T>(label, content)
+		} catch (e) {
+			// If Azure cut off output mid-JSON (common when hitting output token limits),
+			// retry once with a larger maxTokens budget.
+			const finish = (res.finishReason ?? "").toLowerCase()
+			const likelyLengthStop = finish === "length" || finish === "max_output_tokens" || finish === "max_tokens"
+			if (!likelyLengthStop || params?.maxTokens == null) throw e
+			const bumped = Math.min(32_000, Math.max(4000, Math.trunc(params.maxTokens * 2)))
+			logInfo("llm:retry", {
+				provider: "azure",
+				label,
+				reason: "parseJsonObject_failed_after_length_stop",
+				prevMaxTokens: params.maxTokens,
+				nextMaxTokens: bumped,
+				finishReason: res.finishReason ?? null,
+				usage: res.usage ?? null
+			})
+			const res2 = await azureChatCompletionWithMeta(cfg, {
+				messages,
+				temperature: 0,
+				maxTokens: bumped,
+				responseFormat: format
+			})
+			logLLMOutput(`azure:${label}:retry`, res2.content)
+			return parseJsonObject<T>(label, res2.content)
+		}
 	}
 
 	return {
@@ -138,8 +171,10 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 			const out = await chatJsonStructured<{ notes: unknown }>(
 				"Mechanical pass",
 				messages,
-				jsonSchemaResponseFormat("mechanical_pass", schemaNotesOutput)
-				// Let AZURE_OPENAI_MAX_TOKENS (or the client default) control output budget.
+				jsonSchemaResponseFormat("mechanical_pass", schemaNotesOutput),
+				// The mechanical pass can produce a long notes array (1+ per file/hunk).
+				// Without an explicit budget, the Azure client default can truncate mid-JSON.
+				{ maxTokens: 2000 }
 			)
 			return { notes: assertStringArray("Mechanical pass notes", out.notes) }
 		},

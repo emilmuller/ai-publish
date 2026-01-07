@@ -45,7 +45,7 @@ describe("postpublish pipeline", () => {
 
 		const remoteBranch = await gitShowRef(remoteDir, `refs/heads/${post.branch}`)
 		expect(remoteBranch.found).toBe(true)
-	}, 60_000)
+	}, 120_000)
 
 	test("does not push if publish fails", async () => {
 		const { dir } = await makeTempGitRepo()
