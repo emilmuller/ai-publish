@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest"
 import { makeTempGitRepo, commitChange } from "./gitFixture"
 import { runGitOrThrow } from "../src/git/runGit"
-import { resolveHeadVersionTagFromGitTags, resolveVersionBaseFromGitTags } from "../src/version/resolveVersionBase"
+import {
+	resolveHeadVersionTagFromGitTags,
+	resolveVersionBaseBeforeHeadTagFromGitTags,
+	resolveVersionBaseFromGitTags
+} from "../src/version/resolveVersionBase"
 
 describe("Version base resolution", () => {
 	test("defaults to 0.0.0 and empty-tree base when no version tags exist", async () => {
@@ -56,5 +60,38 @@ describe("Version base resolution", () => {
 		const res1 = await resolveHeadVersionTagFromGitTags({ cwd: dir })
 		expect(res1.headTag).toBe("v1.0.0")
 		expect(res1.headVersion).toBe("1.0.0")
+	})
+
+	test("base-before-head-tag resolves the previous tag (not the tag at HEAD)", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		// Tag v1.0.0 at the initial commit.
+		const c0 = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.0.0", c0], { cwd: dir })
+
+		// Move HEAD and tag v1.1.0 there.
+		await commitChange(dir, "x.txt", "x1\n", "change x")
+		const c1 = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.1.0", c1], { cwd: dir })
+
+		const head = await resolveHeadVersionTagFromGitTags({ cwd: dir })
+		expect(head.headTag).toBe("v1.1.0")
+
+		const base = await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd: dir })
+		expect(base.previousTag).toBe("v1.0.0")
+		const v100Commit = (await runGitOrThrow(["rev-list", "-n", "1", "v1.0.0"], { cwd: dir })).trim()
+		expect(base.base).toBe(v100Commit)
+		expect(base.baseCommit).toBe(v100Commit)
+	})
+
+	test("base-before-head-tag falls back to empty tree when only HEAD is tagged", async () => {
+		const { dir } = await makeTempGitRepo()
+		const c0 = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.0.0", c0], { cwd: dir })
+
+		const base = await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd: dir })
+		expect(base.previousTag).toBeNull()
+		expect(base.previousVersion).toBe("0.0.0")
+		expect(base.baseCommit).toBeNull()
 	})
 })

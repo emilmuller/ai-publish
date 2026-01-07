@@ -66,6 +66,67 @@ export async function resolveVersionBaseFromGitTags(params: {
 	return { previousVersion: bestVersion, previousTag: bestTag, base: baseCommit, baseCommit }
 }
 
+/**
+ * Like resolveVersionBaseFromGitTags, but if HEAD is already tagged with a version tag,
+ * resolve the *previous* reachable version tag strictly before HEAD.
+ *
+ * This is useful for generating changelogs/release notes for an already-tagged release:
+ * you want the diff to be `previousTag..HEAD`, not `headTag..HEAD` (which would be empty).
+ */
+export async function resolveVersionBaseBeforeHeadTagFromGitTags(params: {
+	cwd?: string
+	tagPrefix?: string
+}): Promise<ResolvedVersionBase> {
+	const cwd = params.cwd ?? process.cwd()
+	const tagPrefix = params.tagPrefix ?? "v"
+
+	const head = await resolveHeadVersionTagFromGitTags({ cwd, tagPrefix })
+	if (!head.headTag) {
+		return await resolveVersionBaseFromGitTags({ cwd, tagPrefix })
+	}
+
+	const headSha = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd })).trim()
+
+	// Only consider tags reachable from HEAD.
+	const rawTags = await runGitOrThrow(["tag", "--list", `${tagPrefix}*`, "--merged", "HEAD"], { cwd })
+	const mergedTags = rawTags
+		.split(/\r?\n/)
+		.map((t) => t.trim())
+		.filter(Boolean)
+
+	// Exclude tags that point at HEAD (including annotated tags), then pick the highest semver.
+	const candidates: Array<{ tag: string; version: string }> = []
+	for (const tag of mergedTags) {
+		const candidate = stripTagPrefix(tag, tagPrefix)
+		const v = semver.valid(candidate)
+		if (!v) continue
+
+		let commitSha: string
+		try {
+			commitSha = (await runGitOrThrow(["rev-list", "-n", "1", tag], { cwd })).trim()
+		} catch {
+			continue
+		}
+		if (commitSha === headSha) continue
+		candidates.push({ tag, version: v })
+	}
+
+	if (!candidates.length) {
+		// Hash algorithm-safe empty tree object id.
+		const emptyTree = (await runGitOrThrow(["hash-object", "-t", "tree", "--stdin"], { cwd, stdin: "" })).trim()
+		return { previousVersion: "0.0.0", previousTag: null, base: emptyTree, baseCommit: null }
+	}
+
+	// Pick highest version deterministically.
+	let best = candidates[0]
+	for (const c of candidates.slice(1)) {
+		if (semver.gt(c.version, best.version)) best = c
+	}
+
+	const baseCommit = (await runGitOrThrow(["rev-list", "-n", "1", best.tag], { cwd })).trim()
+	return { previousVersion: best.version, previousTag: best.tag, base: baseCommit, baseCommit }
+}
+
 export async function resolveHeadVersionTagFromGitTags(params: {
 	cwd?: string
 	tagPrefix?: string

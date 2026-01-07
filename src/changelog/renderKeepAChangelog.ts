@@ -39,6 +39,7 @@ function shouldOmitFromConsumerChangelog(surface: string | undefined): boolean {
 
 function formatBullets(model: ChangelogModel, bullets: ChangelogBullet[], opts?: { prefix?: string }): string[] {
 	const out: string[] = []
+	let droppedInternalFileBullets = 0
 	for (const b of bullets) {
 		const primaryNodeId = (b.evidenceNodeIds ?? [])[0]
 		const primaryNode = primaryNodeId ? model.evidence?.[primaryNodeId] : undefined
@@ -49,8 +50,17 @@ function formatBullets(model: ChangelogModel, bullets: ChangelogBullet[], opts?:
 
 		const text = normalizeOneLine(b.text)
 		if (!text) continue
-		if (shouldDropAsInternalFileBullet(text)) continue
+		if (shouldDropAsInternalFileBullet(text)) {
+			droppedInternalFileBullets++
+			continue
+		}
 		out.push(`- ${opts?.prefix ?? ""}${text}`.trimEnd())
+	}
+
+	// If we dropped everything due to internal path / dev-log wording, still surface a
+	// single user-facing line so releases that are “internal improvements only” are not blank.
+	if (!out.length && droppedInternalFileBullets > 0) {
+		out.push("- Performance and stability improvements.")
 	}
 	return out
 }

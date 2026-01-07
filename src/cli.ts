@@ -14,7 +14,11 @@ import { createAzureOpenAILLMClient } from "./llm/azureOpenAI"
 import { createOpenAILLMClient } from "./llm/openAI"
 import { writeFileAtomic } from "./util/fs"
 import { logInfo, markCliProcess } from "./util/logger"
-import { resolveHeadVersionTagFromGitTags, resolveVersionBaseFromGitTags } from "./version/resolveVersionBase"
+import {
+	resolveHeadVersionTagFromGitTags,
+	resolveVersionBaseBeforeHeadTagFromGitTags,
+	resolveVersionBaseFromGitTags
+} from "./version/resolveVersionBase"
 
 type ParsedArgs =
 	| { command: "help" }
@@ -353,16 +357,19 @@ async function main() {
 			headTag = resolvedHead.headTag
 			headLabel = resolvedHead.headTag ?? "HEAD"
 		} else {
-			const resolved = await resolveVersionBaseFromGitTags({ cwd: process.cwd() })
+			const resolvedHead = await resolveHeadVersionTagFromGitTags({ cwd: process.cwd() })
+			headTag = resolvedHead.headTag
+			headLabel = resolvedHead.headTag ?? "HEAD"
+
+			const resolved = resolvedHead.headTag
+				? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd: process.cwd() })
+				: await resolveVersionBaseFromGitTags({ cwd: process.cwd() })
 			baseUsed = resolved.base
 			baseSource = "tag"
 			previousTag = resolved.previousTag
 			previousVersion = resolved.previousVersion
 			baseCommit = resolved.baseCommit
 			baseLabel = resolved.previousTag ?? resolved.base
-			const resolvedHead = await resolveHeadVersionTagFromGitTags({ cwd: process.cwd() })
-			headTag = resolvedHead.headTag
-			headLabel = resolvedHead.headTag ?? "HEAD"
 		}
 		const generated = await runChangelogPipeline({
 			base: baseUsed,
@@ -386,16 +393,19 @@ async function main() {
 			headTag = resolvedHead.headTag
 			headLabel = resolvedHead.headTag ?? "HEAD"
 		} else {
-			const resolved = await resolveVersionBaseFromGitTags({ cwd: process.cwd() })
+			const resolvedHead = await resolveHeadVersionTagFromGitTags({ cwd: process.cwd() })
+			headTag = resolvedHead.headTag
+			headLabel = resolvedHead.headTag ?? "HEAD"
+
+			const resolved = resolvedHead.headTag
+				? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd: process.cwd() })
+				: await resolveVersionBaseFromGitTags({ cwd: process.cwd() })
 			baseUsed = resolved.base
 			baseSource = "tag"
 			previousTag = resolved.previousTag
 			previousVersion = resolved.previousVersion
 			baseCommit = resolved.baseCommit
 			baseLabel = resolved.previousTag ?? resolved.base
-			const resolvedHead = await resolveHeadVersionTagFromGitTags({ cwd: process.cwd() })
-			headTag = resolvedHead.headTag
-			headLabel = resolvedHead.headTag ?? "HEAD"
 		}
 
 		// Default output behavior (when --out is not provided):

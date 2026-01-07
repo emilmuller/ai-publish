@@ -12,7 +12,11 @@ import { runVersionBumpPipeline } from "./pipeline/runVersionBumpPipeline"
 import { runPrepublishPipeline } from "./pipeline/runPrepublishPipeline"
 import { runPostpublishPipeline, type PublishRunner } from "./pipeline/runPostpublishPipeline"
 import { writeFileAtomic } from "./util/fs"
-import { resolveHeadVersionTagFromGitTags, resolveVersionBaseFromGitTags } from "./version/resolveVersionBase"
+import {
+	resolveHeadVersionTagFromGitTags,
+	resolveVersionBaseBeforeHeadTagFromGitTags,
+	resolveVersionBaseFromGitTags
+} from "./version/resolveVersionBase"
 import type { ManifestTarget, ManifestType } from "./version/manifests"
 
 export type CommonGenerateArgs = {
@@ -114,8 +118,12 @@ export async function generateChangelog(args: GenerateChangelogArgs): Promise<Ge
 
 	const llmClient = getLLMClient(args)
 
-	const resolved = args.base ? undefined : await resolveVersionBaseFromGitTags({ cwd })
 	const head = await resolveHeadVersionTagFromGitTags({ cwd })
+	const resolved = args.base
+		? undefined
+		: head.headTag
+		? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
+		: await resolveVersionBaseFromGitTags({ cwd })
 	const base = args.base ?? resolved!.base
 	const baseLabel = args.base ?? resolved?.previousTag ?? resolved?.base
 	const headLabel = head.headTag ?? "HEAD"
@@ -158,8 +166,12 @@ export async function generateReleaseNotes(args: CommonGenerateArgs): Promise<Ge
 
 	const llmClient = getLLMClient(args)
 
-	const resolved = args.base ? undefined : await resolveVersionBaseFromGitTags({ cwd })
 	const head = await resolveHeadVersionTagFromGitTags({ cwd })
+	const resolved = args.base
+		? undefined
+		: head.headTag
+		? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
+		: await resolveVersionBaseFromGitTags({ cwd })
 	const base = args.base ?? resolved!.base
 	const baseLabel = args.base ?? resolved?.previousTag ?? resolved?.base
 	let headLabel = head.headTag ?? "HEAD"

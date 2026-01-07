@@ -36,6 +36,21 @@ If a change conflicts with these, redesign it.
     - Editorial: produce the final structured model / release notes
 4. **Validate** before writing output: `validateChangelogModel(model)`
 
+## LLM pass contract (agent notes)
+
+Changelog and release notes generation intentionally follows a **3-pass** LLM contract:
+
+1. **Pass 1 (Mechanical)**: metadata-only inputs → “mechanical notes” (no patch text).
+2. **Pass 2 (Semantic)**: the model may request _bounded_ context via tools.
+    - Diff content is only accessible via `getDiffHunks(hunkIds)` and must be **hunk-ID addressed**.
+    - Tooling is **gated and budgeted** (byte caps); requests beyond the remaining budgets must fail.
+    - Commit messages, when provided, are **untrusted context** and must never be treated as evidence.
+3. **Pass 3 (Editorial)**: structured final output.
+    - Changelog bullets must reference explicit evidence node IDs and must validate against the evidence set.
+    - Release notes must include explicit `evidenceNodeIds`; “markdown with zero evidence” must be rejected.
+
+Version bump recommendation is **deterministic** from the changelog model, and the LLM is only used to provide a human-readable justification. The LLM is required to echo the exact computed `nextVersion`; mismatches must fail.
+
 CLI and programmatic entrypoints follow this structure.
 
 ## Core modules (where to look)

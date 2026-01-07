@@ -156,6 +156,69 @@ For changes that have no textual hunks (e.g. rename-only), ai-publish creates a 
 
 This also applies to binary diffs and other hunkless changes: evidence is represented as metadata only.
 
+### How the LLM passes work (3-pass pipeline)
+
+Both `changelog` and `release-notes` follow the same three-pass structure:
+
+1. **Pass 1: Mechanical (metadata → notes)**
+
+    The model is given only deterministic, metadata-only inputs:
+
+    - the diff summary (file list, change types, basic stats)
+    - evidence nodes (file-level nodes with hunk IDs)
+    - resolved repo instructions (context-only configuration)
+    - deterministic “mechanical facts” (counts + a per-file index, still no patch text)
+
+    It outputs a list of “mechanical notes” — a compact intermediate representation of what changed.
+
+2. **Pass 2: Semantic (tool-gated, budgeted retrieval)**
+
+    The model may request _bounded_ additional context to interpret impact, via a restricted tool surface:
+
+    - `getDiffHunks(hunkIds)` (only hunk IDs that exist in the evidence set are allowed)
+    - bounded repo context (HEAD-only): file snippets, “snippet around”, file metadata
+    - bounded repo search: path search, file search, repo-wide text search, file listing
+
+    All tool outputs are budgeted globally (byte caps), and the pipeline refuses requests once a budget is exhausted.
+
+    Optional commit-message context for `base..HEAD` can be included, but it is explicitly treated as untrusted and never as evidence.
+
+3. **Pass 3: Editorial (structured output + guardrails)**
+
+    - For `changelog`, the model must output a structured changelog model (Keep a Changelog style) where every bullet references explicit evidence node IDs.
+        - The pipeline repairs/dedupes bullets deterministically, conservatively fixes invalid/missing evidence references, and applies deterministic breaking-change heuristics.
+        - Coverage guardrail: if any evidence node is not referenced by at least one bullet, the pipeline injects an auto-generated bullet (e.g. “Updated <file>.”) so the changelog covers the entire `base..HEAD` diff.
+        - The model is validated (no unknown evidence references), then rendered to markdown using the HEAD commit date as the release date.
+    - For `release-notes`, the model outputs human-facing markdown **plus** a list of evidence node IDs supporting that markdown.
+        - The pipeline refuses “markdown with zero evidence” (it will not implicitly attach all evidence).
+        - Rendering prefers a real `v<semver>` tag at HEAD when available, to avoid emitting “Unreleased” for already-tagged releases.
+
+Code pointers:
+
+-   Pipelines: [`src/pipeline/runChangelogPipeline.ts`](src/pipeline/runChangelogPipeline.ts), [`src/pipeline/runReleaseNotesPipeline.ts`](src/pipeline/runReleaseNotesPipeline.ts)
+-   LLM contract: [`src/llm/types.ts`](src/llm/types.ts)
+-   Diff indexing + bounded hunk retrieval: [`src/diff/indexDiff.ts`](src/diff/indexDiff.ts), [`src/diff/getDiffHunks.ts`](src/diff/getDiffHunks.ts)
+-   Evidence construction: [`src/changelog/evidence.ts`](src/changelog/evidence.ts)
+-   Changelog validation + rendering: [`src/changelog/validate.ts`](src/changelog/validate.ts), [`src/changelog/renderKeepAChangelog.ts`](src/changelog/renderKeepAChangelog.ts)
+-   Deterministic mechanical facts: [`src/llm/deterministicFacts.ts`](src/llm/deterministicFacts.ts)
+
+### Version bump: deterministic recommendation + LLM justification
+
+The next version recommendation is computed deterministically from the changelog model:
+
+-   `major` if there are any `breakingChanges`
+-   `minor` if there are any `added` entries
+-   `patch` if there are any `changed`/`fixed`/`removed` entries
+-   `none` if the diff is internal-only
+
+Then ai-publish computes `nextVersion` using semver rules (including prerelease handling when the previous version is a prerelease). The LLM is only used to produce a human-readable justification, and it is required to repeat the same `nextVersion` — if it disagrees, the pipeline fails.
+
+Code pointers:
+
+-   Version bump pipeline: [`src/pipeline/runVersionBumpPipeline.ts`](src/pipeline/runVersionBumpPipeline.ts) (and [`src/pipeline/runPrepublishPipeline.ts`](src/pipeline/runPrepublishPipeline.ts))
+-   Bump type + semver calculation: [`src/version/bump.ts`](src/version/bump.ts)
+-   Tag-based base resolution: [`src/version/resolveVersionBase.ts`](src/version/resolveVersionBase.ts)
+
 ## Versioning (git tags)
 
 ai-publish treats git tags of the form `v<semver>` as the source of truth for release versions.
