@@ -1,5 +1,20 @@
 # Changelog
+## [2.1.0] - 2026-01-08
 
+### Added
+- Expose an ES module build alongside the existing CommonJS entry, enabling native ESM imports in modern tooling.
+- Introduce Node.js version metadata and linting/build configuration to standardize local development and packaging.
+
+### Changed
+- Refine CLI behavior and logging to provide clearer output and more reliable automation flows.
+- Refresh documentation and agent guidance to better explain setup, usage, and release behavior.
+- Tighten instruction resolution and breaking-change detection to better respect per-file rules and highlight impactful changes.
+- Enhance diff processing and commit context handling to generate more precise change descriptions from Git history.
+- Improve LLM client handling for both OpenAI and Azure OpenAI backends to increase reliability and response handling quality.
+- Improve changelog, release-notes, and prepublish pipelines for more accurate summaries and smoother release automation.
+- Refine programmatic and Python integration paths to make it easier to embed the tool in custom workflows.
+- Update language-specific version detection for .NET, npm, Python, Rust, and Go to make version bumps more robust across ecosystems.
+- Update dependencies and lockfile to align with the new build and linting setup.
 ## [2.0.0] - 2026-01-07
 
 ### Changed
