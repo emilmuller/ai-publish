@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import semver from "semver"
 import type { LLMClient } from "../llm/types"
 import { runChangelogPipeline } from "./runChangelogPipeline"
-import { resolveVersionBaseFromGitTags } from "../version/resolveVersionBase"
+import { resolveVersionBase } from "../version/resolveVersionBase"
 import { computeBumpTypeFromChangelogModel, computeNextVersion, assertVersionIncreases } from "../version/bump"
 import { writeFileAtomic } from "../util/fs"
 import type { ManifestTarget, ManifestType } from "../version/manifests"
@@ -18,7 +18,13 @@ import {
 export async function runVersionBumpPipeline(params: {
 	cwd?: string
 	llmClient: LLMClient
+	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
+	indexRootDir?: string
 	tagPrefix?: string
+	/** Optional override for previous version (useful for first-run repos without tags). */
+	previousVersion?: string
+	/** Optional override for base revision (useful to force a diff boundary). */
+	base?: string
 	/** Backwards-compatible alias for npm manifests. Prefer `manifest`. */
 	packageJsonPath?: string
 	/** Which project manifest to update. Defaults to `{ type: "npm", path: "package.json", write: true }`. */
@@ -60,10 +66,21 @@ export async function runVersionBumpPipeline(params: {
 	const absManifestPath = resolve(cwd, manifestRelPath)
 	const shouldWrite = manifest.write ?? true
 
-	const resolvedBase = await resolveVersionBaseFromGitTags({ cwd, tagPrefix: params.tagPrefix })
+	const resolvedBase = await resolveVersionBase({
+		cwd,
+		tagPrefix: params.tagPrefix,
+		manifest: { type: manifestType, path: manifestRelPath, write: false },
+		previousVersionOverride: params.previousVersion,
+		baseOverride: params.base
+	})
 	const previousVersion = resolvedBase.previousVersion
 
-	const changelog = await runChangelogPipeline({ base: resolvedBase.base, cwd, llmClient: params.llmClient })
+	const changelog = await runChangelogPipeline({
+		base: resolvedBase.base,
+		cwd,
+		indexRootDir: params.indexRootDir,
+		llmClient: params.llmClient
+	})
 	const bumpType = computeBumpTypeFromChangelogModel(changelog.model)
 	const nextVersion = computeNextVersion({ previousVersion, bumpType })
 

@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { resolve, dirname, join, relative } from "node:path"
 import semver from "semver"
 import type { LLMClient } from "../llm/types"
-import { resolveHeadVersionTagFromGitTags, resolveVersionBaseFromGitTags } from "../version/resolveVersionBase"
+import { resolveHeadVersionTagFromGitTags, resolveVersionBase } from "../version/resolveVersionBase"
 import { runChangelogPipeline } from "./runChangelogPipeline"
 import { runReleaseNotesPipeline } from "./runReleaseNotesPipeline"
 import { computeBumpTypeFromChangelogModel, computeNextVersion, assertVersionIncreases } from "../version/bump"
@@ -23,9 +23,9 @@ function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
 }
 
-function debugLog(...args: any[]) {
+function debugLog(...args: unknown[]) {
 	if (!debugEnabled()) return
-	// eslint-disable-next-line no-console
+	 
 	console.error("[ai-publish][debug]", ...args)
 }
 
@@ -63,10 +63,16 @@ function updateManifestContent(params: { type: ManifestType; raw: string; nextVe
 export async function runPrepublishPipeline(params: {
 	cwd?: string
 	llmClient: LLMClient
+	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
+	indexRootDir?: string
 	manifest?: ManifestTarget
 	/** Backwards-compatible alias for npm manifests. Prefer `manifest`. */
 	packageJsonPath?: string
 	changelogOutPath?: string
+	/** Optional override for base revision (useful for first-run repos without tags). */
+	base?: string
+	/** Optional override for previous version (useful for first-run repos without tags and go projects). */
+	previousVersion?: string
 }): Promise<{
 	previousVersion: string
 	previousTag: string | null
@@ -94,7 +100,35 @@ export async function runPrepublishPipeline(params: {
 		throw new Error(`HEAD is already tagged with ${headTagged.headTag}. Refusing to prepublish twice.`)
 	}
 
-	const resolvedBase = await resolveVersionBaseFromGitTags({ cwd })
+	// Determine manifest target early so we can use it for no-tags inference.
+	const manifest: ManifestTarget =
+		params.manifest ??
+		(params.packageJsonPath
+			? { type: "npm", path: params.packageJsonPath, write: true }
+			: { type: "npm", path: "package.json", write: true })
+	const manifestType = manifest.type
+	const manifestRelPath =
+		manifest.path ??
+		(manifestType === "npm"
+			? "package.json"
+			: manifestType === "rust"
+			? "Cargo.toml"
+			: manifestType === "python"
+			? "pyproject.toml"
+			: manifestType === "go"
+			? "go.mod"
+			: undefined)
+	if (!manifestRelPath) throw new Error(`Missing manifest path for type: ${manifestType}`)
+	const absManifestPath = resolve(cwd, manifestRelPath)
+	const relManifestPath = toGitPath(relative(cwd, absManifestPath))
+	const shouldWriteManifest = manifest.write ?? true
+
+	const resolvedBase = await resolveVersionBase({
+		cwd,
+		manifest: { type: manifestType, path: relManifestPath, write: false },
+		baseOverride: params.base,
+		previousVersionOverride: params.previousVersion
+	})
 	debugLog("prepublishPipeline:base", {
 		base: resolvedBase.base,
 		previousTag: resolvedBase.previousTag,
@@ -109,6 +143,7 @@ export async function runPrepublishPipeline(params: {
 		baseLabel,
 		headLabel: "HEAD",
 		cwd,
+		indexRootDir: params.indexRootDir,
 		llmClient: params.llmClient
 	})
 	debugLog("prepublishPipeline:changelogModel", {
@@ -158,6 +193,7 @@ export async function runPrepublishPipeline(params: {
 		baseLabel,
 		headLabel: predictedTag,
 		cwd,
+		indexRootDir: params.indexRootDir,
 		llmClient: params.llmClient
 	})
 	debugLog("prepublishPipeline:releaseNotesBytes", releaseNotesGenerated.markdown.length)
@@ -168,29 +204,6 @@ export async function runPrepublishPipeline(params: {
 	const relChangelogPath = toGitPath(relative(cwd, absChangelogPath))
 	const releaseNotesRelPath = toGitPath(join("release-notes", `${predictedTag}.md`))
 	const absReleaseNotesPath = resolve(cwd, releaseNotesRelPath)
-
-	// Determine manifest target.
-	const manifest: ManifestTarget =
-		params.manifest ??
-		(params.packageJsonPath
-			? { type: "npm", path: params.packageJsonPath, write: true }
-			: { type: "npm", path: "package.json", write: true })
-	const manifestType = manifest.type
-	const manifestRelPath =
-		manifest.path ??
-		(manifestType === "npm"
-			? "package.json"
-			: manifestType === "rust"
-			? "Cargo.toml"
-			: manifestType === "python"
-			? "pyproject.toml"
-			: manifestType === "go"
-			? "go.mod"
-			: undefined)
-	if (!manifestRelPath) throw new Error(`Missing manifest path for type: ${manifestType}`)
-	const absManifestPath = resolve(cwd, manifestRelPath)
-	const relManifestPath = toGitPath(relative(cwd, absManifestPath))
-	const shouldWriteManifest = manifest.write ?? true
 
 	// Write manifest version (if enabled).
 	let manifestUpdated = false
@@ -208,8 +221,9 @@ export async function runPrepublishPipeline(params: {
 	let existingChangelog: string | null = null
 	try {
 		existingChangelog = await readFile(absChangelogPath, "utf8")
-	} catch (e: any) {
-		if (e?.code !== "ENOENT") throw e
+	} catch (e: unknown) {
+		const code = e && typeof e === "object" && "code" in e ? (e as { code?: unknown }).code : undefined
+		if (code !== "ENOENT") throw e
 	}
 	if (!existingChangelog) {
 		await writeFileAtomic(absChangelogPath, patchedChangelogMarkdown)

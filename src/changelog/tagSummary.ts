@@ -30,7 +30,7 @@ export function buildReleaseTagMessage(params: {
 	for (const section of sections) {
 		for (const b of section.bullets) {
 			if (usedBullets >= maxBullets) break
-			const t = normalizeOneLine((b as any).text)
+			const t = normalizeOneLine(b.text)
 			if (!t) continue
 			lines.push(`- [${section.label}] ${t}`)
 			usedBullets += 1

@@ -4,6 +4,15 @@ import { getAzureOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+	if (!v || typeof v !== "object" || Array.isArray(v)) return null
+	return v as Record<string, unknown>
+}
+
+function asArray(v: unknown): unknown[] | null {
+	return Array.isArray(v) ? v : null
+}
+
 export type AzureChatCompletionUsage = {
 	/** Chat Completions API */
 	promptTokens?: number
@@ -31,9 +40,9 @@ function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1" || process.env.AI_PUBLISH_DEBUG === "1"
 }
 
-function debugLog(...args: any[]) {
+function debugLog(...args: unknown[]) {
 	if (!debugEnabled()) return
-	// eslint-disable-next-line no-console
+
 	console.error("[ai-publish][debug]", ...args)
 }
 
@@ -71,18 +80,21 @@ function reasoningEffortFromEnv(): "none" | "minimal" | "low" | "medium" | "high
 	return undefined
 }
 
-function parseResponsesOutputText(json: any): string {
-	if (typeof json?.output_text === "string" && json.output_text.trim()) return json.output_text
+function parseResponsesOutputText(json: unknown): string {
+	const rec = asRecord(json)
+	if (typeof rec?.output_text === "string" && rec.output_text.trim()) return rec.output_text
 
 	// Fallback: derive from output message(s)
-	const out = json?.output
+	const out = rec?.output
 	if (!Array.isArray(out)) return ""
 	const parts: string[] = []
 	for (const item of out) {
-		const content = item?.content
+		const itemRec = asRecord(item)
+		const content = itemRec?.content
 		if (!Array.isArray(content)) continue
 		for (const c of content) {
-			if (c && typeof c.text === "string") parts.push(c.text)
+			const cRec = asRecord(c)
+			if (cRec && typeof cRec.text === "string") parts.push(cRec.text)
 		}
 	}
 	return parts.join("")
@@ -96,12 +108,13 @@ function responsesApiVersionFromEnvOrCfg(cfg: AzureOpenAIConfig): string {
 	return "2025-04-01-preview"
 }
 
-function mapChatResponseFormatToResponsesTextFormat(responseFormat: any): any | undefined {
-	if (!responseFormat || typeof responseFormat !== "object") return undefined
-	const t = responseFormat.type
+function mapChatResponseFormatToResponsesTextFormat(responseFormat: unknown): unknown | undefined {
+	const rf = asRecord(responseFormat)
+	if (!rf) return undefined
+	const t = typeof rf.type === "string" ? rf.type : ""
 	if (t === "json_schema") {
-		const js = responseFormat.json_schema
-		if (!js || typeof js !== "object") return undefined
+		const js = asRecord(rf.json_schema)
+		if (!js) return undefined
 		// Chat Completions: { type: 'json_schema', json_schema: { name, description?, schema, strict? } }
 		// Responses: { type: 'json_schema', name, description?, schema, strict? }
 		return {
@@ -123,7 +136,7 @@ async function azureResponsesCompletion(
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
-		responseFormat?: any
+		responseFormat?: unknown
 		onToken?: StreamTokenHandler
 	}
 ): Promise<AzureChatCompletionResult> {
@@ -163,44 +176,58 @@ async function azureResponsesCompletion(
 			...(textFormat ? { text: { format: textFormat } } : {})
 		})
 		try {
-			for await (const ev of stream as any) {
-				const t = typeof ev?.type === "string" ? ev.type : ""
+			for await (const ev of stream) {
+				const evRec = asRecord(ev)
+				const typeVal = typeof evRec?.type === "string" ? evRec.type : ""
 				// Most OpenAI SDK streams emit delta events for output_text.
-				const delta = typeof ev?.delta === "string" ? ev.delta : undefined
-				if (delta && (t.includes("output_text") || t.endsWith(".delta") || t.includes("delta"))) {
+				const delta = typeof evRec?.delta === "string" ? evRec.delta : undefined
+				if (
+					delta &&
+					(typeVal.includes("output_text") || typeVal.endsWith(".delta") || typeVal.includes("delta"))
+				) {
 					params.onToken(delta)
 					continue
 				}
-				const text = typeof ev?.text === "string" ? ev.text : undefined
-				if (text && (t.includes("output_text") || t.endsWith(".delta"))) {
+				const text = typeof evRec?.text === "string" ? evRec.text : undefined
+				if (text && (typeVal.includes("output_text") || typeVal.endsWith(".delta"))) {
 					params.onToken(text)
 				}
 			}
 		} finally {
 			// Ensure the stream is cleaned up if supported.
-			if (typeof (stream as any)?.close === "function") {
+			if (typeof stream.close === "function") {
 				try {
-					;(stream as any).close()
+					stream.close()
 				} catch {
 					// ignore
 				}
 			}
 		}
-		const final =
-			typeof (stream as any)?.finalResponse === "function" ? await (stream as any).finalResponse() : null
+		const final = typeof stream.finalResponse === "function" ? await stream.finalResponse() : null
 		if (final) {
-			const json = final as any
-			const text = parseResponsesOutputText(json)
+			const text = parseResponsesOutputText(final)
 			return {
 				content: text,
-				model: typeof json?.model === "string" ? json.model : undefined,
-				finishReason: typeof json?.status === "string" ? json.status : undefined,
+				model: (() => {
+					const rec = asRecord(final)
+					return typeof rec?.model === "string" ? rec.model : undefined
+				})(),
+				finishReason: (() => {
+					const rec = asRecord(final)
+					return typeof rec?.status === "string" ? rec.status : undefined
+				})(),
 				usage: {
-					outputTokens: typeof json?.usage?.output_tokens === "number" ? json.usage.output_tokens : undefined,
-					reasoningTokens:
-						typeof json?.usage?.output_tokens_details?.reasoning_tokens === "number"
-							? json.usage.output_tokens_details.reasoning_tokens
-							: undefined
+					outputTokens: (() => {
+						const rec = asRecord(final)
+						const usage = rec ? asRecord(rec.usage) : null
+						return typeof usage?.output_tokens === "number" ? usage.output_tokens : undefined
+					})(),
+					reasoningTokens: (() => {
+						const rec = asRecord(final)
+						const usage = rec ? asRecord(rec.usage) : null
+						const details = usage ? asRecord(usage.output_tokens_details) : null
+						return typeof details?.reasoning_tokens === "number" ? details.reasoning_tokens : undefined
+					})()
 				}
 			}
 		}
@@ -217,22 +244,26 @@ async function azureResponsesCompletion(
 		...(textFormat ? { text: { format: textFormat } } : {})
 	})
 
-	const json = response as any
+	const json = response as unknown
 	if (debugEnabled()) {
+		const rec = asRecord(json)
+		const usage = rec ? asRecord(rec.usage) : null
+		const details = usage ? asRecord(usage.output_tokens_details) : null
 		debugLog("azureResponsesCompletion:ok", {
-			model: json?.model,
-			status: json?.status,
-			outputTokens: json?.usage?.output_tokens,
-			reasoningTokens: json?.usage?.output_tokens_details?.reasoning_tokens
+			model: rec?.model,
+			status: rec?.status,
+			outputTokens: usage?.output_tokens,
+			reasoningTokens: details?.reasoning_tokens
 		})
 	}
 	const text = parseResponsesOutputText(json)
 	if (typeof text !== "string" || !text.trim()) {
 		if (debugEnabled()) {
+			const rec = asRecord(json)
 			debugLog("azureResponsesCompletion:missingOutputText", {
-				status: json?.status,
-				model: json?.model,
-				statusText: json?.status
+				status: rec?.status,
+				model: rec?.model,
+				statusText: rec?.status
 			})
 			try {
 				debugLog("azureResponsesCompletion:responseSnippet", JSON.stringify(json).slice(0, 2000))
@@ -245,14 +276,26 @@ async function azureResponsesCompletion(
 
 	return {
 		content: text,
-		model: typeof json?.model === "string" ? json.model : undefined,
-		finishReason: typeof json?.status === "string" ? json.status : undefined,
+		model: (() => {
+			const rec = asRecord(json)
+			return typeof rec?.model === "string" ? rec.model : undefined
+		})(),
+		finishReason: (() => {
+			const rec = asRecord(json)
+			return typeof rec?.status === "string" ? rec.status : undefined
+		})(),
 		usage: {
-			outputTokens: typeof json?.usage?.output_tokens === "number" ? json.usage.output_tokens : undefined,
-			reasoningTokens:
-				typeof json?.usage?.output_tokens_details?.reasoning_tokens === "number"
-					? json.usage.output_tokens_details.reasoning_tokens
-					: undefined
+			outputTokens: (() => {
+				const rec = asRecord(json)
+				const usage = rec ? asRecord(rec.usage) : null
+				return typeof usage?.output_tokens === "number" ? usage.output_tokens : undefined
+			})(),
+			reasoningTokens: (() => {
+				const rec = asRecord(json)
+				const usage = rec ? asRecord(rec.usage) : null
+				const details = usage ? asRecord(usage.output_tokens_details) : null
+				return typeof details?.reasoning_tokens === "number" ? details.reasoning_tokens : undefined
+			})()
 		}
 	}
 }
@@ -274,34 +317,37 @@ async function readChatCompletionsSSE(
 		const trimmed = data.trim()
 		if (!trimmed) return false
 		if (trimmed === "[DONE]") return true
-		let json: any
+		let json: unknown
 		try {
-			json = JSON.parse(trimmed)
+			json = JSON.parse(trimmed) as unknown
 		} catch {
 			return false
 		}
-		if (typeof json?.model === "string") model = json.model
-		const choice = json?.choices?.[0]
+		const rec = asRecord(json)
+		if (typeof rec?.model === "string") model = rec.model
+		const choices = rec ? asArray(rec.choices) : null
+		const choice = choices && choices.length ? asRecord(choices[0]) : null
 		if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason
 		// Some providers can include usage in the final chunk.
-		if (json?.usage && typeof json.usage === "object") {
+		const usageRec = rec ? asRecord(rec.usage) : null
+		if (usageRec) {
 			usage = {
-				promptTokens:
-					typeof json.usage.prompt_tokens === "number" ? json.usage.prompt_tokens : usage?.promptTokens,
+				promptTokens: typeof usageRec.prompt_tokens === "number" ? usageRec.prompt_tokens : usage?.promptTokens,
 				completionTokens:
-					typeof json.usage.completion_tokens === "number"
-						? json.usage.completion_tokens
+					typeof usageRec.completion_tokens === "number"
+						? usageRec.completion_tokens
 						: usage?.completionTokens,
-				totalTokens: typeof json.usage.total_tokens === "number" ? json.usage.total_tokens : usage?.totalTokens
+				totalTokens: typeof usageRec.total_tokens === "number" ? usageRec.total_tokens : usage?.totalTokens
 			}
 		}
-		const delta = choice?.delta
+		const delta = choice ? asRecord(choice.delta) : null
 		let piece: unknown = delta?.content
 		if (Array.isArray(piece)) {
 			piece = piece
-				.map((p: any) => {
+				.map((p) => {
 					if (typeof p === "string") return p
-					if (p && typeof p.text === "string") return p.text
+					const pRec = asRecord(p)
+					if (pRec && typeof pRec.text === "string") return pRec.text
 					return ""
 				})
 				.join("")
@@ -370,7 +416,7 @@ async function azureChatCompletionInner(
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
-		responseFormat?: any
+		responseFormat?: unknown
 		onToken?: StreamTokenHandler
 	},
 	allowNoFormatRetry: boolean
@@ -382,7 +428,8 @@ async function azureChatCompletionInner(
 	// Structured Outputs (response_format json_schema) requires a sufficiently new Azure API version.
 	// Older api versions may silently ignore response_format and return free-form text, causing
 	// downstream JSON parsing to fail intermittently.
-	if (params.responseFormat?.type === "json_schema") {
+	const rf = asRecord(params.responseFormat)
+	if (rf?.type === "json_schema") {
 		assertAzureApiVersionSupportsStructuredOutputs(cfg.apiVersion)
 	}
 
@@ -392,7 +439,7 @@ async function azureChatCompletionInner(
 		cfg.deployment
 	)}/chat/completions?api-version=${encodeURIComponent(cfg.apiVersion)}`
 
-	async function postJson(body: any): Promise<Response> {
+	async function postJson(body: unknown): Promise<Response> {
 		return await fetchWithTimeout(
 			url,
 			{
@@ -407,7 +454,7 @@ async function azureChatCompletionInner(
 		)
 	}
 
-	function makeBaseBody(withFormat: boolean): any {
+	function makeBaseBody(withFormat: boolean): Record<string, unknown> {
 		return {
 			messages: params.messages,
 			temperature: params.temperature ?? 0,
@@ -424,7 +471,7 @@ async function azureChatCompletionInner(
 	const requestedMaxTokens = normalizeMaxTokens(params.maxTokens)
 	const maxTokens = Math.max(envMaxTokens ?? 0, requestedMaxTokens ?? 0) || 1200
 
-	function makeBody(withFormat: boolean): any {
+	function makeBody(withFormat: boolean): Record<string, unknown> {
 		const baseBody = makeBaseBody(withFormat)
 		return tokenField === "max_completion_tokens"
 			? { ...baseBody, max_completion_tokens: maxTokens }
@@ -498,17 +545,20 @@ async function azureChatCompletionInner(
 		return { content, model, finishReason, usage }
 	}
 
-	const json = (await res.json()) as any
-	const choice = json?.choices?.[0]
-	const message = choice?.message
+	const json = (await res.json()) as unknown
+	const jsonRec = asRecord(json)
+	const choices = jsonRec ? asArray(jsonRec.choices) : null
+	const choice = choices && choices.length ? asRecord(choices[0]) : null
+	const message = choice ? asRecord(choice.message) : null
 
 	let content: unknown = message?.content
 	if (Array.isArray(content)) {
 		// Some providers/models return an array of content parts.
 		content = content
-			.map((p: any) => {
+			.map((p) => {
 				if (typeof p === "string") return p
-				if (p && typeof p.text === "string") return p.text
+				const pRec = asRecord(p)
+				if (pRec && typeof pRec.text === "string") return pRec.text
 				return ""
 			})
 			.join("")
@@ -527,7 +577,7 @@ async function azureChatCompletionInner(
 				// ignore
 			}
 		}
-		if (message?.tool_calls) {
+		if (message && message.tool_calls != null) {
 			throw new Error("Azure OpenAI response requested tool calls (no message content)")
 		}
 		if (allowNoFormatRetry && params.responseFormat) {
@@ -537,7 +587,7 @@ async function azureChatCompletionInner(
 
 		// GPT-5.x deployments can behave poorly on chat-completions (empty content + reasoning only).
 		// As a best-effort fallback, try the v1 Responses API once.
-		const model = typeof json?.model === "string" ? json.model : ""
+		const model = typeof jsonRec?.model === "string" ? jsonRec.model : ""
 		if (model.startsWith("gpt-5") || model.startsWith("gpt-5.")) {
 			debugLog("azureChatCompletion:fallbackToResponses", { model })
 			return await azureResponsesCompletion(cfg, params)
@@ -549,13 +599,21 @@ async function azureChatCompletionInner(
 
 	return {
 		content,
-		model: typeof json?.model === "string" ? json.model : undefined,
+		model: typeof jsonRec?.model === "string" ? jsonRec.model : undefined,
 		finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
 		usage: {
-			promptTokens: typeof json?.usage?.prompt_tokens === "number" ? json.usage.prompt_tokens : undefined,
-			completionTokens:
-				typeof json?.usage?.completion_tokens === "number" ? json.usage.completion_tokens : undefined,
-			totalTokens: typeof json?.usage?.total_tokens === "number" ? json.usage.total_tokens : undefined
+			promptTokens: (() => {
+				const usage = jsonRec ? asRecord(jsonRec.usage) : null
+				return typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : undefined
+			})(),
+			completionTokens: (() => {
+				const usage = jsonRec ? asRecord(jsonRec.usage) : null
+				return typeof usage?.completion_tokens === "number" ? usage.completion_tokens : undefined
+			})(),
+			totalTokens: (() => {
+				const usage = jsonRec ? asRecord(jsonRec.usage) : null
+				return typeof usage?.total_tokens === "number" ? usage.total_tokens : undefined
+			})()
 		}
 	}
 }
@@ -566,7 +624,7 @@ export async function azureChatCompletion(
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
-		responseFormat?: any
+		responseFormat?: unknown
 		onToken?: StreamTokenHandler
 	}
 ): Promise<string> {
@@ -580,7 +638,7 @@ export async function azureChatCompletionWithMeta(
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
-		responseFormat?: any
+		responseFormat?: unknown
 		onToken?: StreamTokenHandler
 	}
 ): Promise<AzureChatCompletionResult> {

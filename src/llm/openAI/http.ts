@@ -3,6 +3,15 @@ import { getOpenAIClient } from "../openaiSdk"
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+	if (!v || typeof v !== "object" || Array.isArray(v)) return null
+	return v as Record<string, unknown>
+}
+
+function asArray(v: unknown): unknown[] | null {
+	return Array.isArray(v) ? v : null
+}
+
 function reasoningEffortFromEnv(): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null | undefined {
 	const raw = (process.env.OPENAI_REASONING_EFFORT ?? process.env.AI_PUBLISH_REASONING_EFFORT ?? "").trim()
 	if (!raw) return undefined
@@ -43,8 +52,10 @@ function extractErrorMessage(bodyText: string): string {
 	const t = (bodyText ?? "").trim()
 	if (!t) return ""
 	try {
-		const parsed = JSON.parse(t) as any
-		const msg = parsed?.error?.message
+		const parsed = JSON.parse(t) as unknown
+		const parsedRec = asRecord(parsed)
+		const errRec = parsedRec ? asRecord(parsedRec.error) : null
+		const msg = errRec?.message
 		return typeof msg === "string" && msg.trim() ? msg.trim() : t
 	} catch {
 		return t
@@ -57,15 +68,16 @@ export async function openAIChatCompletion(
 		messages: ChatMessage[]
 		temperature?: number
 		maxTokens?: number
-		responseFormat?: any
+		responseFormat?: unknown
 	}
 ): Promise<string> {
-	function mapChatResponseFormatToResponsesTextFormat(responseFormat: any): any | undefined {
-		if (!responseFormat || typeof responseFormat !== "object") return undefined
-		const t = responseFormat.type
+	function mapChatResponseFormatToResponsesTextFormat(responseFormat: unknown): unknown | undefined {
+		const rf = asRecord(responseFormat)
+		if (!rf) return undefined
+		const t = typeof rf.type === "string" ? rf.type : ""
 		if (t === "json_schema") {
-			const js = responseFormat.json_schema
-			if (!js || typeof js !== "object") return undefined
+			const js = asRecord(rf.json_schema)
+			if (!js) return undefined
 			return {
 				type: "json_schema",
 				...(typeof js.name === "string" ? { name: js.name } : {}),
@@ -106,7 +118,8 @@ export async function openAIChatCompletion(
 			...(textFormat ? { text: { format: textFormat } } : {})
 		})
 
-		const outputText = typeof response?.output_text === "string" ? response.output_text : ""
+		const respRec = asRecord(response)
+		const outputText = typeof respRec?.output_text === "string" ? respRec.output_text : ""
 		if (!outputText.trim()) throw new Error("OpenAI Responses API returned empty output_text")
 		return outputText
 	}
@@ -121,7 +134,7 @@ export async function openAIChatCompletion(
 
 	const url = `${cfg.baseUrl}/chat/completions`
 
-	async function postJson(body: any): Promise<Response> {
+	async function postJson(body: unknown): Promise<Response> {
 		return await fetchWithTimeout(
 			url,
 			{
@@ -182,8 +195,12 @@ export async function openAIChatCompletion(
 		throw new Error(`OpenAI request failed (${res.status}): ${msg}`)
 	}
 
-	const json = (await res.json()) as any
-	const content = json?.choices?.[0]?.message?.content
+	const json = (await res.json()) as unknown
+	const jsonRec = asRecord(json)
+	const choices = jsonRec ? asArray(jsonRec.choices) : null
+	const firstChoice = choices && choices.length ? asRecord(choices[0]) : null
+	const message = firstChoice ? asRecord(firstChoice.message) : null
+	const content = message?.content
 	if (typeof content !== "string" || !content.trim()) {
 		throw new Error("OpenAI response missing message content")
 	}

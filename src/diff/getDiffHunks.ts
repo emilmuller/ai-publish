@@ -33,8 +33,11 @@ export async function getDiffHunks(params: {
 		let buf: Buffer
 		try {
 			buf = await readFile(p)
-		} catch (err: any) {
-			const code = err?.code ? ` (${err.code})` : ""
+		} catch (err: unknown) {
+			const code =
+				err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code != null
+					? ` (${String((err as { code?: unknown }).code)})`
+					: ""
 			throw new Error(`Failed to read hunk file for id ${id}${code}: ${p}`)
 		}
 		const byteLength = buf.byteLength

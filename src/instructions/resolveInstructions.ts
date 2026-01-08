@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises"
-import { join, resolve, sep } from "node:path"
+import { join, resolve } from "node:path"
 import { runGitOrThrow } from "../git/runGit"
 import { parseDirectivesFromText } from "./directives"
 import type { InstructionFile, ResolvedInstructions } from "./types"

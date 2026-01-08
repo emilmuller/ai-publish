@@ -2,13 +2,15 @@ import type { DiffHunk } from "../diff/types"
 import { getDiffHunks } from "../diff/getDiffHunks"
 
 function isMaxTotalBytesExceededError(err: unknown): boolean {
-	const msg = (err as any)?.message
+	if (!err || typeof err !== "object" || !("message" in err)) return false
+	const msg = (err as { message?: unknown }).message
 	return typeof msg === "string" && msg.includes("Requested hunks exceed maxTotalBytes")
 }
 
 export async function fetchHunksWithBudget(opts: {
 	base: string
 	cwd: string
+	indexRootDir?: string
 	/** Allowed hunk id set for validation */
 	allowedHunkIds: Set<string>
 	/** Mutable state object containing remainingBytes that will be decremented */
@@ -17,7 +19,7 @@ export async function fetchHunksWithBudget(opts: {
 	/** max chunk size per request (default 12) */
 	maxChunk?: number
 }): Promise<DiffHunk[]> {
-	const { base, cwd, allowedHunkIds, state, hunkIds, maxChunk = 12 } = opts
+	const { base, cwd, indexRootDir, allowedHunkIds, state, hunkIds, maxChunk = 12 } = opts
 
 	// Ignore unknown IDs (tool-gating): return only evidence-known hunks.
 	// Important: do not drop known IDs just because unknown ones were requested.
@@ -36,7 +38,13 @@ export async function fetchHunksWithBudget(opts: {
 		while (chunkSize > 0) {
 			const chunkIds = allowed.slice(cursor, cursor + chunkSize)
 			try {
-				const hunks = await getDiffHunks({ base, hunkIds: chunkIds, cwd, maxTotalBytes: state.remainingBytes })
+				const hunks = await getDiffHunks({
+					base,
+					hunkIds: chunkIds,
+					cwd,
+					indexRootDir,
+					maxTotalBytes: state.remainingBytes
+				})
 				collected.push(...hunks)
 				const used = hunks.reduce((sum: number, h: DiffHunk) => sum + (h.byteLength ?? 0), 0)
 				state.remainingBytes -= used

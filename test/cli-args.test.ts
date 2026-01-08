@@ -47,6 +47,7 @@ describe("cli args", () => {
 		expect(parsed).toEqual({
 			command: "release-notes",
 			base: "HEAD",
+			previousVersion: undefined,
 			outPath: "RELEASE_NOTES.md",
 			outProvided: false,
 			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
@@ -58,6 +59,37 @@ describe("cli args", () => {
 		const parsed = parseCliArgs(["prepublish", "--llm", "azure"])
 		expect(parsed).toEqual({
 			command: "prepublish",
+			base: undefined,
+			previousVersion: undefined,
+			projectType: "npm",
+			manifestPath: undefined,
+			writeManifest: true,
+			packageJsonPath: "package.json",
+			changelogOutPath: "CHANGELOG.md",
+			outProvided: false,
+			llm: "azure"
+		})
+	})
+
+	test("parses --previous-version for release-notes", () => {
+		const parsed = parseCliArgs(["release-notes", "--previous-version", "1.2.3", "--llm", "azure"])
+		expect(parsed).toEqual({
+			command: "release-notes",
+			base: undefined,
+			previousVersion: "1.2.3",
+			outPath: "RELEASE_NOTES.md",
+			outProvided: false,
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
+			llm: "azure"
+		})
+	})
+
+	test("parses --base and --previous-version for prepublish", () => {
+		const parsed = parseCliArgs(["prepublish", "--base", "HEAD~1", "--previous-version", "9.9.9", "--llm", "azure"])
+		expect(parsed).toEqual({
+			command: "prepublish",
+			base: "HEAD~1",
+			previousVersion: "9.9.9",
 			projectType: "npm",
 			manifestPath: undefined,
 			writeManifest: true,
@@ -110,6 +142,19 @@ describe("cli args", () => {
 			outPath: "CHANGELOG.md",
 			outProvided: false,
 			commitContext: { mode: "snippet", maxTotalBytes: 4096, maxCommits: 12 },
+			llm: "azure"
+		})
+	})
+
+	test("parses --index-root-dir", () => {
+		const parsed = parseCliArgs(["changelog", "--llm", "azure", "--index-root-dir", "C:/tmp/ai-publish"])
+		expect(parsed).toEqual({
+			command: "changelog",
+			base: undefined,
+			outPath: "CHANGELOG.md",
+			outProvided: false,
+			indexRootDir: "C:/tmp/ai-publish",
+			commitContext: { mode: "snippet", maxTotalBytes: 65536, maxCommits: 200 },
 			llm: "azure"
 		})
 	})

@@ -66,4 +66,31 @@ describe("prepublish pipeline", () => {
 		expect(releaseNotes).toContain("## v1.2.4\n")
 		expect(releaseNotes).toContain("### Highlights")
 	}, 60_000)
+
+	test("no tags: infers previousVersion from manifest and produces correct next version", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		// Seed a public API file before the version-setting commit.
+		await commitChange(dir, "src/public/api.ts", "export const foo = 0\n", "seed public api")
+
+		// Establish the current published version in the manifest, but do NOT tag.
+		await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.2.3" }, null, 2) + "\n",
+			"set version 1.2.3"
+		)
+
+		// User-visible patch change after the version commit.
+		await commitChange(dir, "src/public/api.ts", "export const foo = 1\n", "public change")
+
+		const res = await runPrepublishPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
+		expect(res.previousTag).toBeNull()
+		expect(res.previousVersion).toBe("1.2.3")
+		expect(res.bumpType).toBe("patch")
+		expect(res.predictedTag).toBe("v1.2.4")
+
+		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any
+		expect(pkg.version).toBe("1.2.4")
+	})
 })

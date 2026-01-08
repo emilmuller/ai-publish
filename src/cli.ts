@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
-import { writeFile, readFile, mkdir } from "node:fs/promises"
+import { writeFile, mkdir } from "node:fs/promises"
 import { resolve } from "node:path"
 import { dirname, join } from "node:path"
 import { validateChangelogModel } from "./changelog/validate"
-import { extractFirstKeepAChangelogEntry, upsertKeepAChangelogEntry } from "./changelog/prepend"
 import { runChangelogPipeline } from "./pipeline/runChangelogPipeline"
 import { runReleaseNotesPipeline } from "./pipeline/runReleaseNotesPipeline"
 import { runVersionBumpPipeline } from "./pipeline/runVersionBumpPipeline"
@@ -14,11 +13,51 @@ import { createAzureOpenAILLMClient } from "./llm/azureOpenAI"
 import { createOpenAILLMClient } from "./llm/openAI"
 import { writeFileAtomic } from "./util/fs"
 import { logInfo, markCliProcess } from "./util/logger"
+import { runGitOrThrow } from "./git/runGit"
 import {
 	resolveHeadVersionTagFromGitTags,
 	resolveVersionBaseBeforeHeadTagFromGitTags,
 	resolveVersionBaseFromGitTags
 } from "./version/resolveVersionBase"
+
+async function tryResolveCommitSha(cwd: string, rev: string): Promise<string | null> {
+	try {
+		return (await runGitOrThrow(["rev-parse", `${rev}^{commit}`], { cwd })).trim()
+	} catch {
+		return null
+	}
+}
+
+export async function applyAutoNamingBumpToCliSummary(params: {
+	current: {
+		baseUsed?: string
+		baseCommit?: string | null
+		baseSource?: "explicit" | "tag" | "manifest"
+		baseLabel?: string
+		previousTag?: string | null
+		previousVersion?: string
+	}
+	bumped: {
+		base: string
+		previousVersion: string
+	}
+	resolveCommitSha: (rev: string) => Promise<string | null>
+}): Promise<{
+	baseUsed: string
+	baseCommit: string | null | undefined
+	baseSource: "explicit" | "tag" | "manifest" | undefined
+	baseLabel: string
+	previousVersion: string
+}> {
+	const baseUsed = params.bumped.base
+	const previousVersion = params.bumped.previousVersion
+	const baseCommit = params.current.baseCommit ?? (await params.resolveCommitSha(baseUsed))
+	// In tagless repos, version-bump derives base from manifest history, not tags.
+	const baseSource = params.current.previousTag ? params.current.baseSource : "manifest"
+	const baseLabel = params.current.previousTag ?? baseUsed
+
+	return { baseUsed, baseCommit, baseSource, baseLabel, previousVersion }
+}
 
 type ParsedArgs =
 	| { command: "help" }
@@ -27,6 +66,7 @@ type ParsedArgs =
 			base?: string
 			outPath: string
 			outProvided: boolean
+			indexRootDir?: string
 			commitContext?: {
 				mode: "none" | "snippet" | "full"
 				maxCommits?: number
@@ -37,8 +77,10 @@ type ParsedArgs =
 	| {
 			command: "release-notes"
 			base?: string
+			previousVersion?: string
 			outPath: string
 			outProvided: boolean
+			indexRootDir?: string
 			commitContext?: {
 				mode: "none" | "snippet" | "full"
 				maxCommits?: number
@@ -48,12 +90,15 @@ type ParsedArgs =
 	  }
 	| {
 			command: "prepublish"
+			base?: string
+			previousVersion?: string
 			projectType: "npm" | "dotnet" | "rust" | "python" | "go"
 			manifestPath?: string
 			writeManifest: boolean
 			packageJsonPath?: string
 			changelogOutPath: string
 			outProvided: boolean
+			indexRootDir?: string
 			llm: "azure" | "openai"
 	  }
 	| {
@@ -66,16 +111,17 @@ type ParsedArgs =
 export function formatUsage(): string {
 	return [
 		"Usage:",
-		"  ai-publish changelog [--base <commit>] [--out <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
-		"  ai-publish release-notes [--base <commit>] [--out <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
-		"  ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--debug]",
 		"  ai-publish --help",
 		"",
 		"Notes:",
 		"  - LLM mode is required for changelog/release-notes/prepublish; use --llm azure or --llm openai.",
 		"  - --debug enables verbose stderr diagnostics.",
-		"  - If --base is omitted, the tool diffs from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
+		"  - If --base is omitted, changelog/release-notes diff from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
+		"  - prepublish/version-bump: when no tags exist, previousVersion is inferred from the selected manifest (or set via --previous-version), and base may be inferred from manifest history.",
 		"  - Commit messages are enabled by default as untrusted hints (never treated as evidence of changes).",
 		"    - Default: --commit-context snippet --commit-context-bytes 65536 --commit-context-commits 200",
 		"    - Disable: --commit-context none",
@@ -85,7 +131,6 @@ export function formatUsage(): string {
 }
 
 function usage(exitCode: number): never {
-	// eslint-disable-next-line no-console
 	console.error(formatUsage())
 	process.exit(exitCode)
 }
@@ -94,9 +139,9 @@ function debugEnabledFromEnv(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1" || process.env.AI_PUBLISH_DEBUG === "1"
 }
 
-function debugLog(...args: any[]) {
+function debugLog(...args: unknown[]) {
 	if (!debugEnabledFromEnv()) return
-	// eslint-disable-next-line no-console
+
 	console.error("[ai-publish][debug]", ...args)
 }
 
@@ -150,9 +195,11 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	let writeManifest = true
 	let packageJsonPath: string | undefined = "package.json"
 	let llm: "azure" | "openai" | undefined
+	let previousVersion: string | undefined
 	let commitContextMode: "none" | "snippet" | "full" | undefined
 	let commitContextBytes: number | undefined
 	let commitContextCommits: number | undefined
+	let indexRootDir: string | undefined
 
 	const seenFlags = new Set<string>()
 
@@ -173,10 +220,20 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 
 		switch (token) {
 			case "--base": {
-				if (command !== "changelog" && command !== "release-notes") {
-					throw new Error(`--base is only supported for ${"changelog"} and ${"release-notes"}`)
+				if (command !== "changelog" && command !== "release-notes" && command !== "prepublish") {
+					throw new Error(
+						`--base is only supported for ${"changelog"}, ${"release-notes"} and ${"prepublish"}`
+					)
 				}
 				base = takeValue(args, i, token)
+				i += 1
+				break
+			}
+			case "--previous-version": {
+				if (command !== "release-notes" && command !== "prepublish") {
+					throw new Error("--previous-version is only supported for release-notes and prepublish")
+				}
+				previousVersion = takeValue(args, i, token)
 				i += 1
 				break
 			}
@@ -260,6 +317,14 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 				i += 1
 				break
 			}
+			case "--index-root-dir": {
+				if (command !== "changelog" && command !== "release-notes" && command !== "prepublish") {
+					throw new Error("--index-root-dir is only supported for changelog, release-notes and prepublish")
+				}
+				indexRootDir = takeValue(args, i, token)
+				i += 1
+				break
+			}
 			default:
 				throw new Error(`Unknown flag: ${token}`)
 		}
@@ -269,38 +334,61 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 
 	// Commit messages are untrusted context-only hints.
 	// Enable by default for changelog/release-notes, with conservative budgets.
-	const DEFAULT_COMMIT_CONTEXT_MODE: "snippet" = "snippet"
+	const DEFAULT_COMMIT_CONTEXT_MODE = "snippet" as const
 	const DEFAULT_COMMIT_CONTEXT_BYTES = 64 * 1024
 	const DEFAULT_COMMIT_CONTEXT_COMMITS = 200
 
 	const shouldHaveCommitContext = command === "changelog" || command === "release-notes"
 	const resolvedCommitContextMode = shouldHaveCommitContext
-		? commitContextMode ?? DEFAULT_COMMIT_CONTEXT_MODE
+		? (commitContextMode ?? DEFAULT_COMMIT_CONTEXT_MODE)
 		: undefined
 
 	const commitContext = !resolvedCommitContextMode
 		? undefined
 		: resolvedCommitContextMode === "none"
-		? { mode: "none" as const }
-		: {
-				mode: resolvedCommitContextMode,
-				maxTotalBytes: commitContextBytes ?? DEFAULT_COMMIT_CONTEXT_BYTES,
-				maxCommits: commitContextCommits ?? DEFAULT_COMMIT_CONTEXT_COMMITS
-		  }
+			? { mode: "none" as const }
+			: {
+					mode: resolvedCommitContextMode,
+					maxTotalBytes: commitContextBytes ?? DEFAULT_COMMIT_CONTEXT_BYTES,
+					maxCommits: commitContextCommits ?? DEFAULT_COMMIT_CONTEXT_COMMITS
+				}
 
-	if (command === "changelog") return { command: "changelog", base, outPath, outProvided, commitContext, llm: llm! }
-	if (command === "release-notes")
-		return { command: "release-notes", base, outPath, outProvided, commitContext, llm: llm! }
+	if (command === "changelog") {
+		return {
+			command: "changelog",
+			base,
+			outPath,
+			outProvided,
+			commitContext,
+			llm: llm!,
+			...(indexRootDir ? { indexRootDir } : {})
+		}
+	}
+	if (command === "release-notes") {
+		return {
+			command: "release-notes",
+			base,
+			previousVersion,
+			outPath,
+			outProvided,
+			commitContext,
+			llm: llm!,
+			...(indexRootDir ? { indexRootDir } : {})
+		}
+	}
 	if (command === "prepublish") {
 		return {
 			command: "prepublish",
+			base,
+			previousVersion,
 			projectType,
 			manifestPath,
 			writeManifest,
 			packageJsonPath,
 			changelogOutPath: outPath,
 			outProvided,
-			llm: llm!
+			llm: llm!,
+			...(indexRootDir ? { indexRootDir } : {})
 		}
 	}
 	if (command === "postpublish") return { command: "postpublish", projectType, manifestPath, llm }
@@ -317,10 +405,9 @@ async function main() {
 	let parsed: ParsedArgs
 	try {
 		parsed = parseCliArgs(rawArgv)
-	} catch (err: any) {
-		// eslint-disable-next-line no-console
-		console.error(err?.message ?? String(err))
-		if (debug && err?.stack) console.error(err.stack)
+	} catch (err: unknown) {
+		console.error(err instanceof Error ? err.message : String(err))
+		if (debug && err instanceof Error && err.stack) console.error(err.stack)
 		usage(2)
 	}
 
@@ -332,15 +419,15 @@ async function main() {
 		parsed.command === "postpublish"
 			? undefined
 			: parsed.llm === "azure"
-			? createAzureOpenAILLMClient()
-			: parsed.llm === "openai"
-			? createOpenAILLMClient()
-			: undefined
+				? createAzureOpenAILLMClient()
+				: parsed.llm === "openai"
+					? createOpenAILLMClient()
+					: undefined
 	if (parsed.command !== "postpublish" && !llmClient) throw new Error("LLM client is required")
 
 	let markdown = ""
 	let baseUsed: string | undefined
-	let baseSource: "explicit" | "tag" | undefined
+	let baseSource: "explicit" | "tag" | "manifest" | undefined
 	let previousTag: string | null | undefined
 	let previousVersion: string | undefined
 	let baseCommit: string | null | undefined
@@ -376,6 +463,7 @@ async function main() {
 			baseLabel,
 			headLabel,
 			llmClient: llmClient!,
+			indexRootDir: parsed.indexRootDir,
 			commitContext: parsed.commitContext
 		})
 		// (llmClient is required for changelog)
@@ -419,9 +507,25 @@ async function main() {
 				const bumped = await runVersionBumpPipeline({
 					cwd: process.cwd(),
 					llmClient: llmClient!,
+					indexRootDir: parsed.indexRootDir,
+					previousVersion: parsed.previousVersion,
 					manifest: { type: "npm", path: "package.json", write: false }
 				})
 				const predictedTag = `v${bumped.nextVersion}`
+
+				// Keep JSON summary consistent: when auto-naming via version bump, use the same
+				// resolved base/previousVersion that the bump pipeline used.
+				const updated = await applyAutoNamingBumpToCliSummary({
+					current: { baseUsed, baseCommit, baseSource, baseLabel, previousTag, previousVersion },
+					bumped: { base: bumped.base, previousVersion: bumped.previousVersion },
+					resolveCommitSha: (rev) => tryResolveCommitSha(process.cwd(), rev)
+				})
+				previousVersion = updated.previousVersion
+				baseUsed = updated.baseUsed
+				baseCommit = updated.baseCommit
+				baseSource = updated.baseSource
+				baseLabel = updated.baseLabel
+
 				parsed.outPath = join("release-notes", `${predictedTag}.md`)
 				headLabel = predictedTag
 			}
@@ -431,6 +535,7 @@ async function main() {
 			baseLabel,
 			headLabel,
 			llmClient: llmClient!,
+			indexRootDir: parsed.indexRootDir,
 			commitContext: parsed.commitContext
 		})
 		markdown = generated.markdown
@@ -438,6 +543,9 @@ async function main() {
 		const pre = await runPrepublishPipeline({
 			cwd: process.cwd(),
 			llmClient: llmClient!,
+			indexRootDir: parsed.indexRootDir,
+			base: parsed.base,
+			previousVersion: parsed.previousVersion,
 			packageJsonPath: parsed.packageJsonPath,
 			manifest: {
 				type: parsed.projectType,
@@ -447,7 +555,7 @@ async function main() {
 			changelogOutPath: parsed.changelogOutPath
 		})
 		markdown = ""
-		// eslint-disable-next-line no-console
+
 		console.log(JSON.stringify(pre, null, 2))
 		return
 	} else if (parsed.command === "postpublish") {
@@ -458,7 +566,7 @@ async function main() {
 			manifestPath: parsed.manifestPath
 		})
 		markdown = ""
-		// eslint-disable-next-line no-console
+
 		console.log(JSON.stringify(post, null, 2))
 		return
 	}
@@ -475,7 +583,6 @@ async function main() {
 		await writeFile(absOut!, markdown, "utf8")
 	}
 
-	// eslint-disable-next-line no-console
 	console.log(
 		JSON.stringify(
 			{
@@ -497,7 +604,6 @@ async function main() {
 declare const require: NodeRequire | undefined
 if (typeof require !== "undefined" && require.main === module) {
 	main().catch((err) => {
-		// eslint-disable-next-line no-console
 		console.error(err?.message ?? String(err))
 		process.exit(1)
 	})

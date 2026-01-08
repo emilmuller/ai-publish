@@ -1,3 +1,27 @@
+import semver from "semver"
+
+function normalizeSemverOrThrow(raw: string, label: string): string {
+	const trimmed = raw.trim()
+	const v = semver.valid(trimmed) ?? (trimmed.startsWith("v") ? semver.valid(trimmed.slice(1)) : null)
+	if (!v) throw new Error(`${label} is not valid semver: ${raw}`)
+	return v
+}
+
+function readFirstTagValue(raw: string, tagName: string): string | null {
+	const re = new RegExp(`<${tagName}>[\\s\\S]*?<\\/${tagName}>`, "m")
+	const m = raw.match(re)
+	if (!m) return null
+	const inner = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "m").exec(m[0])
+	const value = (inner?.[1] ?? "").trim()
+	return value || null
+}
+
+export function readCsprojVersion(raw: string): string {
+	const v = readFirstTagValue(raw, "Version") ?? readFirstTagValue(raw, "PackageVersion")
+	if (!v) throw new Error(".csproj does not contain a <Version> or <PackageVersion> value")
+	return normalizeSemverOrThrow(v, "csproj version")
+}
+
 function detectNewline(s: string): string {
 	return s.includes("\r\n") ? "\r\n" : "\n"
 }

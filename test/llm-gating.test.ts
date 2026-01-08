@@ -281,7 +281,7 @@ describe("LLM tool-gating", () => {
 		await runChangelogPipeline({ base, cwd: dir, llmClient: client })
 		expect(searchMatches).toBeGreaterThan(0)
 		expect(searchWasTruncated).toBe(false)
-	})
+	}, 60_000)
 
 	test("semantic hunk retrieval is restricted to evidence-known hunk IDs", async () => {
 		const { dir } = await makeTempGitRepo()

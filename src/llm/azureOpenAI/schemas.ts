@@ -1,4 +1,13 @@
-export function jsonSchemaResponseFormat(name: string, schema: unknown): any {
+export type JsonSchemaResponseFormat = {
+	type: "json_schema"
+	json_schema: {
+		name: string
+		strict: true
+		schema: unknown
+	}
+}
+
+export function jsonSchemaResponseFormat(name: string, schema: unknown): JsonSchemaResponseFormat {
 	return {
 		type: "json_schema",
 		json_schema: {

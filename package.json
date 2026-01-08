@@ -14,6 +14,7 @@
   "homepage": "https://github.com/emilmuller/ai-publish#readme",
   "type": "commonjs",
   "main": "dist/index.js",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "files": [
     "dist/**",
@@ -24,6 +25,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
       "require": "./dist/index.js"
     }
   },
@@ -45,21 +47,29 @@
     "azure"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsup",
     "release": "npm run build && node dist/cli.js prepublish --llm azure && node dist/cli.js postpublish",
+    "format:md": "prettier --write \"**/*.md\"",
+    "format:md:check": "prettier --check \"**/*.md\"",
     "test": "vitest run",
     "test:llm-eval": "node -e \"process.env.AI_PUBLISH_LLM_EVAL='1'; delete process.env.CI; const { spawnSync } = require('node:child_process'); const r = spawnSync(process.execPath, ['./node_modules/vitest/vitest.mjs','run','test/integration-changelog-llm-eval.test.ts','test/integration-release-notes-llm-eval.test.ts','test/integration-version-bump-llm-eval.test.ts'], { stdio: 'inherit' }); process.exit(r.status ?? 1)\"",
     "test:llm-generate": "node -e \"process.env.AI_PUBLISH_LLM_GENERATE='1'; delete process.env.CI; const { spawnSync } = require('node:child_process'); const r = spawnSync(process.execPath, ['./node_modules/vitest/vitest.mjs','run','test/integration-changelog-azure-generate.test.ts','test/integration-changelog-azure-breaking-via-context.test.ts','test/integration-release-notes-azure-generate.test.ts','test/integration-version-bump-azure-generate.test.ts','test/integration-version-bump-azure-quality.test.ts'], { stdio: 'inherit' }); process.exit(r.status ?? 1)\"",
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "npm run typecheck"
+    "lint": "eslint src --ext .ts --max-warnings 0",
+    "lint:fix": "eslint src --ext .ts --fix --max-warnings 0"
   },
   "dependencies": {
     "openai": "^6.15.0",
-    "semver": "^7.7.2"
+    "semver": "^7.7.3"
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
-    "@types/semver": "^7.7.0",
+    "@types/semver": "^7.7.1",
+    "@typescript-eslint/eslint-plugin": "^8.52.0",
+    "@typescript-eslint/parser": "^8.52.0",
+    "eslint": "^9.39.2",
+    "prettier": "^3.7.4",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16"
   }

@@ -10,6 +10,11 @@ import type {
 } from "../../repo/types"
 import type { ResolvedInstructions } from "../../instructions/types"
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+	if (!v || typeof v !== "object" || Array.isArray(v)) return null
+	return v as Record<string, unknown>
+}
+
 function stripCodeFences(text: string): string {
 	const t = text.trim()
 	const m = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(t)
@@ -26,7 +31,7 @@ function extractFirstJsonValue(text: string): string | null {
 		const c = s[i]
 		if (c === "{" || c === "[") {
 			start = i
-			openChar = c as any
+			openChar = c
 			break
 		}
 	}
@@ -102,13 +107,10 @@ export function assertString(label: string, v: unknown): string {
 export function assertBulletArray(label: string, v: unknown): ChangelogBullet[] {
 	if (!Array.isArray(v)) throw new Error(`${label}: expected bullet[]`)
 	for (const item of v) {
-		if (typeof item !== "object" || !item) throw new Error(`${label}: expected bullet object`)
-		const anyItem = item as any
-		if (typeof anyItem.text !== "string") throw new Error(`${label}: bullet.text must be string`)
-		if (
-			!Array.isArray(anyItem.evidenceNodeIds) ||
-			anyItem.evidenceNodeIds.some((x: any) => typeof x !== "string")
-		) {
+		const obj = asRecord(item)
+		if (!obj) throw new Error(`${label}: expected bullet object`)
+		if (typeof obj.text !== "string") throw new Error(`${label}: bullet.text must be string`)
+		if (!Array.isArray(obj.evidenceNodeIds) || obj.evidenceNodeIds.some((x) => typeof x !== "string")) {
 			throw new Error(`${label}: bullet.evidenceNodeIds must be string[]`)
 		}
 	}
@@ -148,7 +150,7 @@ export function renderEvidenceIndexRedactedForReleaseNotes(evidence: Record<stri
 		const e = evidence[id]!
 		const safeFileHint =
 			e.surface === "public-api" || e.surface === "config"
-				? e.filePath.replace(/\\/g, "/").split("/").pop() ?? ""
+				? (e.filePath.replace(/\\/g, "/").split("/").pop() ?? "")
 				: ""
 		lines.push(
 			[
@@ -197,13 +199,13 @@ export function coerceSnippetRequests(v: unknown): RepoFileSnippetRequest[] {
 	if (!Array.isArray(v)) return []
 	const out: RepoFileSnippetRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
-		if (typeof anyItem.path !== "string") continue
-		const startLine = Number(anyItem.startLine)
-		const endLine = Number(anyItem.endLine)
+		const obj = asRecord(item)
+		if (!obj) continue
+		if (typeof obj.path !== "string") continue
+		const startLine = Number(obj.startLine)
+		const endLine = Number(obj.endLine)
 		if (!Number.isFinite(startLine) || !Number.isFinite(endLine)) continue
-		out.push({ path: anyItem.path, startLine: Math.trunc(startLine), endLine: Math.trunc(endLine) })
+		out.push({ path: obj.path, startLine: Math.trunc(startLine), endLine: Math.trunc(endLine) })
 	}
 	return out
 }
@@ -212,8 +214,8 @@ export function coerceSearchRequests(v: unknown): RepoFileSearchRequest[] {
 	if (!Array.isArray(v)) return []
 	const out: RepoFileSearchRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		if (typeof anyItem.path !== "string") continue
 		if (typeof anyItem.query !== "string") continue
 		const ignoreCase = typeof anyItem.ignoreCase === "boolean" ? anyItem.ignoreCase : undefined
@@ -221,8 +223,8 @@ export function coerceSearchRequests(v: unknown): RepoFileSearchRequest[] {
 			anyItem.maxResults == null
 				? undefined
 				: Number.isFinite(Number(anyItem.maxResults))
-				? Math.trunc(Number(anyItem.maxResults))
-				: undefined
+					? Math.trunc(Number(anyItem.maxResults))
+					: undefined
 		out.push({
 			path: anyItem.path,
 			query: anyItem.query,
@@ -237,26 +239,26 @@ export function coerceRepoSearchRequests(v: unknown): RepoTextSearchRequest[] {
 	if (!Array.isArray(v)) return []
 	const out: RepoTextSearchRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		if (typeof anyItem.query !== "string") continue
 		const ignoreCase = typeof anyItem.ignoreCase === "boolean" ? anyItem.ignoreCase : undefined
 		const pathPrefix = typeof anyItem.pathPrefix === "string" ? anyItem.pathPrefix : undefined
 		const fileExtensions = Array.isArray(anyItem.fileExtensions)
-			? (anyItem.fileExtensions.filter((s: unknown) => typeof s === "string") as string[])
+			? anyItem.fileExtensions.filter((s): s is string => typeof s === "string")
 			: undefined
 		const maxResults =
 			anyItem.maxResults == null
 				? undefined
 				: Number.isFinite(Number(anyItem.maxResults))
-				? Math.trunc(Number(anyItem.maxResults))
-				: undefined
+					? Math.trunc(Number(anyItem.maxResults))
+					: undefined
 		const maxFiles =
 			anyItem.maxFiles == null
 				? undefined
 				: Number.isFinite(Number(anyItem.maxFiles))
-				? Math.trunc(Number(anyItem.maxFiles))
-				: undefined
+					? Math.trunc(Number(anyItem.maxFiles))
+					: undefined
 		out.push({
 			query: anyItem.query,
 			...(ignoreCase != null ? { ignoreCase } : {}),
@@ -273,18 +275,18 @@ export function coerceRepoFileListRequests(v: unknown): RepoFileListRequest[] {
 	if (!Array.isArray(v)) return []
 	const out: RepoFileListRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		const pathPrefix = typeof anyItem.pathPrefix === "string" ? anyItem.pathPrefix : undefined
 		const fileExtensions = Array.isArray(anyItem.fileExtensions)
-			? (anyItem.fileExtensions.filter((s: unknown) => typeof s === "string") as string[])
+			? anyItem.fileExtensions.filter((s): s is string => typeof s === "string")
 			: undefined
 		const maxFiles =
 			anyItem.maxFiles == null
 				? undefined
 				: Number.isFinite(Number(anyItem.maxFiles))
-				? Math.trunc(Number(anyItem.maxFiles))
-				: undefined
+					? Math.trunc(Number(anyItem.maxFiles))
+					: undefined
 		out.push({
 			...(pathPrefix != null ? { pathPrefix } : {}),
 			...(fileExtensions != null ? { fileExtensions } : {}),
@@ -298,20 +300,20 @@ export function coerceRepoPathSearchRequests(v: unknown): RepoPathSearchRequest[
 	if (!Array.isArray(v)) return []
 	const out: RepoPathSearchRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		if (typeof anyItem.query !== "string") continue
 		const ignoreCase = typeof anyItem.ignoreCase === "boolean" ? anyItem.ignoreCase : undefined
 		const pathPrefix = typeof anyItem.pathPrefix === "string" ? anyItem.pathPrefix : undefined
 		const fileExtensions = Array.isArray(anyItem.fileExtensions)
-			? (anyItem.fileExtensions.filter((s: unknown) => typeof s === "string") as string[])
+			? anyItem.fileExtensions.filter((s): s is string => typeof s === "string")
 			: undefined
 		const maxFiles =
 			anyItem.maxFiles == null
 				? undefined
 				: Number.isFinite(Number(anyItem.maxFiles))
-				? Math.trunc(Number(anyItem.maxFiles))
-				: undefined
+					? Math.trunc(Number(anyItem.maxFiles))
+					: undefined
 		out.push({
 			query: anyItem.query,
 			...(ignoreCase != null ? { ignoreCase } : {}),
@@ -327,8 +329,8 @@ export function coerceSnippetAroundRequests(v: unknown): RepoSnippetAroundReques
 	if (!Array.isArray(v)) return []
 	const out: RepoSnippetAroundRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		if (typeof anyItem.path !== "string") continue
 		const lineNumber = Number(anyItem.lineNumber)
 		if (!Number.isFinite(lineNumber)) continue
@@ -336,8 +338,8 @@ export function coerceSnippetAroundRequests(v: unknown): RepoSnippetAroundReques
 			anyItem.contextLines == null
 				? undefined
 				: Number.isFinite(Number(anyItem.contextLines))
-				? Math.trunc(Number(anyItem.contextLines))
-				: undefined
+					? Math.trunc(Number(anyItem.contextLines))
+					: undefined
 		out.push({
 			path: anyItem.path,
 			lineNumber: Math.trunc(lineNumber),
@@ -351,8 +353,8 @@ export function coerceRepoFileMetaRequests(v: unknown): RepoFileMetaRequest[] {
 	if (!Array.isArray(v)) return []
 	const out: RepoFileMetaRequest[] = []
 	for (const item of v) {
-		if (!item || typeof item !== "object") continue
-		const anyItem = item as any
+		const anyItem = asRecord(item)
+		if (!anyItem) continue
 		if (typeof anyItem.path !== "string") continue
 		out.push({ path: anyItem.path })
 	}

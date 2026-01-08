@@ -22,8 +22,12 @@ import type { ManifestTarget, ManifestType } from "./version/manifests"
 export type CommonGenerateArgs = {
 	/** Git base revision (same as CLI `--base`). If omitted, defaults to previous version tag commit (v<semver>) or empty tree. */
 	base?: string
+	/** Optional previous version override (same as CLI `--previous-version`). */
+	previousVersion?: string
 	/** Output path (same as CLI `--out`). */
 	outPath?: string
+	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
+	indexRootDir?: string
 	/** LLM provider (same as CLI `--llm`). */
 	llm: "azure" | "openai"
 	/** Working directory to run in (defaults to `process.cwd()`). */
@@ -49,12 +53,18 @@ export type GenerateReleaseNotesResult = {
 }
 
 export type PrepublishArgs = {
+	/** Git base revision (same as CLI `--base`). */
+	base?: string
+	/** Optional previous version override (same as CLI `--previous-version`). */
+	previousVersion?: string
 	/** Backwards-compatible alias for npm manifests. Prefer `manifest`. */
 	packageJsonPath?: string
 	/** Which project manifest to update. Defaults to `{ type: "npm", path: "package.json", write: true }`. */
 	manifest?: ManifestTarget
 	/** Changelog output path (same as CLI `prepublish --out`). */
 	changelogOutPath?: string
+	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
+	indexRootDir?: string
 	/** LLM provider (same as CLI `--llm`). */
 	llm: "azure" | "openai"
 	/** Working directory to run in (defaults to `process.cwd()`). */
@@ -105,7 +115,8 @@ function getLLMClient(args: CommonGenerateArgs): LLMClient {
 	if (args.llmClient) return args.llmClient
 	if (args.llm === "azure") return createAzureOpenAILLMClient()
 	if (args.llm === "openai") return createOpenAILLMClient()
-	throw new Error(`Unsupported LLM provider: ${(args as any).llm}`)
+	const llm: never = args.llm
+	throw new Error(`Unsupported LLM provider: ${llm}`)
 }
 
 /**
@@ -122,13 +133,20 @@ export async function generateChangelog(args: GenerateChangelogArgs): Promise<Ge
 	const resolved = args.base
 		? undefined
 		: head.headTag
-		? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
-		: await resolveVersionBaseFromGitTags({ cwd })
+			? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
+			: await resolveVersionBaseFromGitTags({ cwd })
 	const base = args.base ?? resolved!.base
 	const baseLabel = args.base ?? resolved?.previousTag ?? resolved?.base
 	const headLabel = head.headTag ?? "HEAD"
-	const generated = await runChangelogPipeline({ base, baseLabel, headLabel, cwd, llmClient })
-	const validation = validateChangelogModel(generated.model as any)
+	const generated = await runChangelogPipeline({
+		base,
+		baseLabel,
+		headLabel,
+		cwd,
+		indexRootDir: args.indexRootDir,
+		llmClient
+	})
+	const validation = validateChangelogModel(generated.model)
 	if (!validation.ok) {
 		throw new Error(`Changelog model validation failed:\n${validation.errors.join("\n")}`)
 	}
@@ -137,8 +155,9 @@ export async function generateChangelog(args: GenerateChangelogArgs): Promise<Ge
 	let existing: string | null = null
 	try {
 		existing = await readFile(absOut, "utf8")
-	} catch (e: any) {
-		if (e?.code !== "ENOENT") throw e
+	} catch (e: unknown) {
+		const code = e && typeof e === "object" && "code" in e ? (e as { code?: unknown }).code : undefined
+		if (code !== "ENOENT") throw e
 	}
 	if (!existing) {
 		await writeFileAtomic(absOut, generated.markdown)
@@ -170,8 +189,8 @@ export async function generateReleaseNotes(args: CommonGenerateArgs): Promise<Ge
 	const resolved = args.base
 		? undefined
 		: head.headTag
-		? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
-		: await resolveVersionBaseFromGitTags({ cwd })
+			? await resolveVersionBaseBeforeHeadTagFromGitTags({ cwd })
+			: await resolveVersionBaseFromGitTags({ cwd })
 	const base = args.base ?? resolved!.base
 	const baseLabel = args.base ?? resolved?.previousTag ?? resolved?.base
 	let headLabel = head.headTag ?? "HEAD"
@@ -181,13 +200,22 @@ export async function generateReleaseNotes(args: CommonGenerateArgs): Promise<Ge
 		const bumped = await runVersionBumpPipeline({
 			cwd,
 			llmClient,
+			indexRootDir: args.indexRootDir,
+			previousVersion: args.previousVersion,
 			manifest: { type: "npm", path: "package.json", write: false }
 		})
 		const predictedTag = `v${bumped.nextVersion}`
 		headLabel = predictedTag
 		outPath = join("release-notes", `${predictedTag}.md`)
 	}
-	const generated = await runReleaseNotesPipeline({ base, baseLabel, headLabel, cwd, llmClient })
+	const generated = await runReleaseNotesPipeline({
+		base,
+		baseLabel,
+		headLabel,
+		cwd,
+		indexRootDir: args.indexRootDir,
+		llmClient
+	})
 
 	const absOut = resolve(cwd, outPath)
 	await mkdir(dirname(absOut), { recursive: true })
@@ -212,6 +240,9 @@ export async function prepublish(args: PrepublishArgs): Promise<PrepublishResult
 	const res = await runPrepublishPipeline({
 		cwd,
 		llmClient,
+		indexRootDir: args.indexRootDir,
+		base: args.base,
+		previousVersion: args.previousVersion,
 		packageJsonPath: args.packageJsonPath,
 		manifest: args.manifest,
 		changelogOutPath: args.changelogOutPath

@@ -22,8 +22,8 @@ ai-publish requires an LLM provider for `prepublish`, `changelog`, and `release-
 
 Before running the CLI, choose a provider (`openai` or `azure`) and set the required environment variables (see the “LLM providers” section below).
 
--   OpenAI: set `OPENAI_API_KEY` and `OPENAI_MODEL`
--   Azure OpenAI: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
+- OpenAI: set `OPENAI_API_KEY` and `OPENAI_MODEL`
+- Azure OpenAI: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
 
 In the repo you want to release:
 
@@ -37,8 +37,8 @@ npx ai-publish postpublish
 
 Publishing is the part most likely to fail or require interaction (credentials, OTP/2FA, network, registry errors). ai-publish splits the flow so your git history and tags stay correct:
 
--   `prepublish` can safely generate outputs and compute `v<next>` without creating a “release commit” or tag.
--   `postpublish` runs the actual publish step first, and only **after publish succeeds** does it create the release commit and annotated `v<next>` tag and push them.
+- `prepublish` can safely generate outputs and compute `v<next>` without creating a “release commit” or tag.
+- `postpublish` runs the actual publish step first, and only **after publish succeeds** does it create the release commit and annotated `v<next>` tag and push them.
 
 If publishing fails, you do not end up with a pushed release tag that doesn’t correspond to a published artifact.
 
@@ -46,27 +46,27 @@ If publishing fails, you do not end up with a pushed release tag that doesn’t 
 
 `prepublish`:
 
--   Requires a clean worktree.
--   Refuses if `HEAD` is already tagged with a `v<semver>` tag.
--   Writes release outputs to disk:
-    -   changelog (default `CHANGELOG.md`, overridable via `--out`)
-    -   release notes at `release-notes/v<next>.md`
-    -   optional manifest version update (disabled via `--no-write`)
--   Writes an intent file: `.ai-publish/prepublish.json`.
--   Does **not** create a git commit.
--   Does **not** create a git tag.
--   Does **not** push anything.
+- Requires a clean worktree.
+- Refuses if `HEAD` is already tagged with a `v<semver>` tag.
+- Writes release outputs to disk:
+  - changelog (default `CHANGELOG.md`, overridable via `--out`)
+  - release notes at `release-notes/v<next>.md`
+  - optional manifest version update (disabled via `--no-write`)
+- Writes an intent file: `.ai-publish/prepublish.json`.
+- Does **not** create a git commit.
+- Does **not** create a git tag.
+- Does **not** push anything.
 
 `postpublish`:
 
--   Requires `.ai-publish/prepublish.json` (i.e., you must run `prepublish` first).
--   Runs the project-type publish step first.
--   After publish succeeds, it:
-    -   creates a **release commit** containing only the prepared release paths
-        -   commit message: `chore(release): v<next>`
-    -   creates an **annotated tag** `v<next>` pointing at that commit
-    -   pushes the current branch and the tag to the remote (default `origin`)
--   Refuses if your working tree has changes outside the release output paths recorded by `prepublish`.
+- Requires `.ai-publish/prepublish.json` (i.e., you must run `prepublish` first).
+- Runs the project-type publish step first.
+- After publish succeeds, it:
+  - creates a **release commit** containing only the prepared release paths
+    - commit message: `chore(release): v<next>`
+  - creates an **annotated tag** `v<next>` pointing at that commit
+  - pushes the current branch and the tag to the remote (default `origin`)
+- Refuses if your working tree has changes outside the release output paths recorded by `prepublish`.
 
 ## Recommended release flow
 
@@ -119,8 +119,8 @@ npx ai-publish changelog --llm openai
 npx ai-publish release-notes --llm openai
 ```
 
--   `changelog` writes `CHANGELOG.md` by default.
--   `release-notes` writes to `release-notes/v<next>.md` by default when `--out` is omitted and you are not using an explicit `--base` (or `release-notes/<tag>.md` if `HEAD` is already tagged).
+- `changelog` writes `CHANGELOG.md` by default.
+- `release-notes` writes to `release-notes/v<next>.md` by default when `--out` is omitted and you are not using an explicit `--base` (or `release-notes/<tag>.md` if `HEAD` is already tagged).
 
 ## Quickstart (from source)
 
@@ -139,12 +139,36 @@ node /path/to/ai-publish/dist/cli.js changelog --llm openai
 
 ## Core invariants
 
--   Sole authority for what changed is `git diff <base>..HEAD`.
--   The diff is indexed and queryable.
--   Binary diffs are metadata-only.
--   The full diff is never returned by APIs; callers must request bounded hunks by ID.
+- Sole authority for what changed is `git diff <base>..HEAD`.
+- The diff is indexed and queryable.
+- Binary diffs are metadata-only.
+- The full diff is never returned by APIs; callers must request bounded hunks by ID.
 
 These rules are the point of the tool: they make output auditable and make prompt-injection style attacks much harder (because downstream analysis can only “see” bounded evidence).
+
+## Diff index storage (.ai-publish)
+
+ai-publish persists a **bounded diff index** under `.ai-publish/diff-index/<baseSha>..<headSha>/`.
+
+- The manifest is metadata-only (`manifest.json`).
+- Each hunk is stored as a separate `.patch` file (bounded and possibly truncated).
+
+Important: these hunk files are still derived from your repo’s diff and may contain sensitive information (secrets, credentials, proprietary code). The repo’s `.gitignore` should exclude `.ai-publish/` (this repo does).
+
+If you want the diff index stored elsewhere (for example in a temp directory, encrypted volume, or CI workspace scratch area), pass:
+
+```bash
+npx ai-publish changelog --llm <openai|azure> --index-root-dir <path>
+npx ai-publish release-notes --llm <openai|azure> --index-root-dir <path>
+npx ai-publish prepublish --llm <openai|azure> --index-root-dir <path>
+```
+
+Practical defaults:
+
+- CI runners: set `--index-root-dir` to a workspace scratch directory that is guaranteed writable.
+- Local runs:
+  - Linux/macOS: `--index-root-dir /tmp/ai-publish`
+  - Windows (PowerShell): `--index-root-dir "$env:TEMP\ai-publish"`
 
 ## How it works (high level)
 
@@ -163,71 +187,69 @@ Both `changelog` and `release-notes` follow the same three-pass structure:
 
 1. **Pass 1: Mechanical (metadata → notes)**
 
-    The model is given only deterministic, metadata-only inputs:
+   The model is given only deterministic, metadata-only inputs:
+   - the diff summary (file list, change types, basic stats)
+   - evidence nodes (file-level nodes with hunk IDs)
+   - resolved repo instructions (context-only configuration)
+   - deterministic “mechanical facts” (counts + a per-file index, still no patch text)
 
-    - the diff summary (file list, change types, basic stats)
-    - evidence nodes (file-level nodes with hunk IDs)
-    - resolved repo instructions (context-only configuration)
-    - deterministic “mechanical facts” (counts + a per-file index, still no patch text)
-
-    It outputs a list of “mechanical notes” — a compact intermediate representation of what changed.
+   It outputs a list of “mechanical notes” — a compact intermediate representation of what changed.
 
 2. **Pass 2: Semantic (tool-gated, budgeted retrieval)**
 
-    The model may request _bounded_ additional context to interpret impact, via a restricted tool surface:
+   The model may request _bounded_ additional context to interpret impact, via a restricted tool surface:
+   - `getDiffHunks(hunkIds)` (only hunk IDs that exist in the evidence set are allowed)
+   - bounded repo context (HEAD-only): file snippets, “snippet around”, file metadata
+   - bounded repo search: path search, file search, repo-wide text search, file listing
 
-    - `getDiffHunks(hunkIds)` (only hunk IDs that exist in the evidence set are allowed)
-    - bounded repo context (HEAD-only): file snippets, “snippet around”, file metadata
-    - bounded repo search: path search, file search, repo-wide text search, file listing
+   All tool outputs are budgeted globally (byte caps), and the pipeline refuses requests once a budget is exhausted.
 
-    All tool outputs are budgeted globally (byte caps), and the pipeline refuses requests once a budget is exhausted.
-
-    Optional commit-message context for `base..HEAD` can be included, but it is explicitly treated as untrusted and never as evidence.
+   Optional commit-message context for `base..HEAD` can be included, but it is explicitly treated as untrusted and never as evidence.
 
 3. **Pass 3: Editorial (structured output + guardrails)**
-
-    - For `changelog`, the model must output a structured changelog model (Keep a Changelog style) where every bullet references explicit evidence node IDs.
-        - The pipeline repairs/dedupes bullets deterministically, conservatively fixes invalid/missing evidence references, and applies deterministic breaking-change heuristics.
-        - Coverage guardrail: if any evidence node is not referenced by at least one bullet, the pipeline injects an auto-generated bullet (e.g. “Updated <file>.”) so the changelog covers the entire `base..HEAD` diff.
-        - The model is validated (no unknown evidence references), then rendered to markdown using the HEAD commit date as the release date.
-    - For `release-notes`, the model outputs human-facing markdown **plus** a list of evidence node IDs supporting that markdown.
-        - The pipeline refuses “markdown with zero evidence” (it will not implicitly attach all evidence).
-        - Rendering prefers a real `v<semver>` tag at HEAD when available, to avoid emitting “Unreleased” for already-tagged releases.
+   - For `changelog`, the model must output a structured changelog model (Keep a Changelog style) where every bullet references explicit evidence node IDs.
+     - The pipeline repairs/dedupes bullets deterministically, conservatively fixes invalid/missing evidence references, and applies deterministic breaking-change heuristics.
+     - Coverage guardrail: if any evidence node is not referenced by at least one bullet, the pipeline injects an auto-generated bullet (e.g. “Updated <file>.”) so the changelog covers the entire `base..HEAD` diff.
+     - The model is validated (no unknown evidence references), then rendered to markdown using the HEAD commit date as the release date.
+   - For `release-notes`, the model outputs human-facing markdown **plus** a list of evidence node IDs supporting that markdown.
+     - The pipeline refuses “markdown with zero evidence” (it will not implicitly attach all evidence).
+     - Rendering prefers a real `v<semver>` tag at HEAD when available, to avoid emitting “Unreleased” for already-tagged releases.
 
 Code pointers:
 
--   Pipelines: [`src/pipeline/runChangelogPipeline.ts`](src/pipeline/runChangelogPipeline.ts), [`src/pipeline/runReleaseNotesPipeline.ts`](src/pipeline/runReleaseNotesPipeline.ts)
--   LLM contract: [`src/llm/types.ts`](src/llm/types.ts)
--   Diff indexing + bounded hunk retrieval: [`src/diff/indexDiff.ts`](src/diff/indexDiff.ts), [`src/diff/getDiffHunks.ts`](src/diff/getDiffHunks.ts)
--   Evidence construction: [`src/changelog/evidence.ts`](src/changelog/evidence.ts)
--   Changelog validation + rendering: [`src/changelog/validate.ts`](src/changelog/validate.ts), [`src/changelog/renderKeepAChangelog.ts`](src/changelog/renderKeepAChangelog.ts)
--   Deterministic mechanical facts: [`src/llm/deterministicFacts.ts`](src/llm/deterministicFacts.ts)
+- Pipelines: [`src/pipeline/runChangelogPipeline.ts`](src/pipeline/runChangelogPipeline.ts), [`src/pipeline/runReleaseNotesPipeline.ts`](src/pipeline/runReleaseNotesPipeline.ts)
+- LLM contract: [`src/llm/types.ts`](src/llm/types.ts)
+- Diff indexing + bounded hunk retrieval: [`src/diff/indexDiff.ts`](src/diff/indexDiff.ts), [`src/diff/getDiffHunks.ts`](src/diff/getDiffHunks.ts)
+- Evidence construction: [`src/changelog/evidence.ts`](src/changelog/evidence.ts)
+- Changelog validation + rendering: [`src/changelog/validate.ts`](src/changelog/validate.ts), [`src/changelog/renderKeepAChangelog.ts`](src/changelog/renderKeepAChangelog.ts)
+- Deterministic mechanical facts: [`src/llm/deterministicFacts.ts`](src/llm/deterministicFacts.ts)
 
 ### Version bump: deterministic recommendation + LLM justification
 
 The next version recommendation is computed deterministically from the changelog model:
 
--   `major` if there are any `breakingChanges`
--   `minor` if there are any `added` entries
--   `patch` if there are any `changed`/`fixed`/`removed` entries
--   `none` if the diff is internal-only
+- `major` if there are any `breakingChanges`
+- `minor` if there are any `added` entries
+- `patch` if there are any `changed`/`fixed`/`removed` entries
+- `none` if the diff is internal-only
 
 Then ai-publish computes `nextVersion` using semver rules (including prerelease handling when the previous version is a prerelease). The LLM is only used to produce a human-readable justification, and it is required to repeat the same `nextVersion` — if it disagrees, the pipeline fails.
 
 Code pointers:
 
--   Version bump pipeline: [`src/pipeline/runVersionBumpPipeline.ts`](src/pipeline/runVersionBumpPipeline.ts) (and [`src/pipeline/runPrepublishPipeline.ts`](src/pipeline/runPrepublishPipeline.ts))
--   Bump type + semver calculation: [`src/version/bump.ts`](src/version/bump.ts)
--   Tag-based base resolution: [`src/version/resolveVersionBase.ts`](src/version/resolveVersionBase.ts)
+- Version bump pipeline: [`src/pipeline/runVersionBumpPipeline.ts`](src/pipeline/runVersionBumpPipeline.ts) (and [`src/pipeline/runPrepublishPipeline.ts`](src/pipeline/runPrepublishPipeline.ts))
+- Bump type + semver calculation: [`src/version/bump.ts`](src/version/bump.ts)
+- Tag-based base resolution: [`src/version/resolveVersionBase.ts`](src/version/resolveVersionBase.ts)
 
 ## Versioning (git tags)
 
 ai-publish treats git tags of the form `v<semver>` as the source of truth for release versions.
 
--   If `--base` is omitted, the diff base defaults to the most recent reachable `v<semver>` tag commit (otherwise the empty tree).
--   `prepublish` computes a predicted `v<next>` and prepares release outputs locally.
--   `postpublish` creates a local release commit and an annotated tag `v<next>` pointing at that commit after publish succeeds, then pushes the branch + tag.
--   Manifests (e.g. `package.json`, `.csproj`) are updated to match `v<next>` (unless `--no-write`).
+- For `changelog` and `release-notes`: if `--base` is omitted, the diff base defaults to the most recent reachable `v<semver>` tag commit (otherwise the empty tree).
+- For `prepublish` and version bumping: if no version tags exist, ai-publish infers `previousVersion` from the selected manifest (or you can set it explicitly via `--previous-version`), and it may infer a base commit from manifest history when possible.
+- `prepublish` computes a predicted `v<next>` and prepares release outputs locally.
+- `postpublish` creates a local release commit and an annotated tag `v<next>` pointing at that commit after publish succeeds, then pushes the branch + tag.
+- Manifests (e.g. `package.json`, `.csproj`) are updated to match `v<next>` (unless `--no-write`).
 
 ## CLI
 
@@ -237,56 +259,54 @@ LLM mode is required for `changelog`, `release-notes`, and `prepublish`: you mus
 LLM providers are mentioned below; OpenAI is listed first.
 
 ```text
-ai-publish changelog [--base <commit>] [--out <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
-ai-publish release-notes [--base <commit>] [--out <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
-ai-publish prepublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] --llm <openai|azure> [--debug]
+ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
+ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
+ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--debug]
 ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--debug]
 ai-publish --help
 ```
 
 ### Outputs and defaults
 
--   `changelog`
+- `changelog`
+  - Default output path: `CHANGELOG.md`
+  - Writes the changelog markdown, then prints a JSON summary (base resolution, tags, etc.).
+  - If the output file already exists, prepends the newly generated version entry at the top (full history).
+    - Special case: `## [Unreleased]` is replaced (upsert) rather than duplicated.
+    - Legacy `# Changelog (<base>..<head>)` headers are migrated to a `## [<version>]` section when possible.
 
-    -   Default output path: `CHANGELOG.md`
-    -   Writes the changelog markdown, then prints a JSON summary (base resolution, tags, etc.).
-    -   If the output file already exists, prepends the newly generated version entry at the top (full history).
-        -   Special case: `## [Unreleased]` is replaced (upsert) rather than duplicated.
-        -   Legacy `# Changelog (<base>..<head>)` headers are migrated to a `## [<version>]` section when possible.
+- `release-notes`
+  - If `--out` is provided, writes exactly there.
+  - If `--out` is not provided:
+    - If `HEAD` is already tagged `v<semver>`, writes `release-notes/<tag>.md`.
+    - Otherwise (most common, when `--base` is omitted), computes the next version tag and writes `release-notes/v<next>.md`.
+    - If you pass an explicit `--base` and `HEAD` is not tagged, the default output remains `RELEASE_NOTES.md`.
+  - Always prints a JSON summary.
 
--   `release-notes`
+- `prepublish`
+  - Refuses to run if the git worktree is dirty.
+  - Refuses to run if `HEAD` is already tagged with a version tag.
+  - If no version tags exist, infers `previousVersion` from the selected manifest (or use `--previous-version`).
+    - For `--project-type go` without tags, you must pass `--previous-version`.
+  - Writes:
+    - changelog (default `CHANGELOG.md`, overridable via `--out`)
+    - release notes under `release-notes/v<next>.md`
+    - optionally updates the selected manifest version (disabled via `--no-write`)
+  - Does not create a commit or tag (those are created by `postpublish` after publish succeeds).
+  - Prints a JSON result to stdout (it does not print the markdown).
+  - `--package <path>` is a backwards-compatible alias for npm manifests; it implies `--project-type npm`.
 
-    -   If `--out` is provided, writes exactly there.
-    -   If `--out` is not provided:
-        -   If `HEAD` is already tagged `v<semver>`, writes `release-notes/<tag>.md`.
-        -   Otherwise (most common, when `--base` is omitted), computes the next version tag and writes `release-notes/v<next>.md`.
-        -   If you pass an explicit `--base` and `HEAD` is not tagged, the default output remains `RELEASE_NOTES.md`.
-    -   Always prints a JSON summary.
+  Changelog behavior:
+  - If the changelog output file already exists, prepublish prepends the newly generated version entry at the top (full history).
+  - Legacy `# Changelog (<base>..<head>)` headers are migrated to a `## [<version>]` section when possible.
 
--   `prepublish`
-
-    -   Refuses to run if the git worktree is dirty.
-    -   Refuses to run if `HEAD` is already tagged with a version tag.
-    -   Writes:
-        -   changelog (default `CHANGELOG.md`, overridable via `--out`)
-        -   release notes under `release-notes/v<next>.md`
-        -   optionally updates the selected manifest version (disabled via `--no-write`)
-    -   Does not create a commit or tag (those are created by `postpublish` after publish succeeds).
-    -   Prints a JSON result to stdout (it does not print the markdown).
-    -   `--package <path>` is a backwards-compatible alias for npm manifests; it implies `--project-type npm`.
-
-    Changelog behavior:
-
-    -   If the changelog output file already exists, prepublish prepends the newly generated version entry at the top (full history).
-    -   Legacy `# Changelog (<base>..<head>)` headers are migrated to a `## [<version>]` section when possible.
-
--   `postpublish`
-    -   Requires `.ai-publish/prepublish.json` (i.e., you must run `prepublish` first).
-    -   Requires being on a branch (not detached `HEAD`).
-    -   Runs a project-type-specific publish step.
-    -   After publish succeeds, creates a release commit + annotated `v<next>` tag, then pushes the branch + tag.
-    -   Prints a JSON result to stdout.
-    -   Note: `--llm` is not accepted for postpublish.
+- `postpublish`
+  - Requires `.ai-publish/prepublish.json` (i.e., you must run `prepublish` first).
+  - Requires being on a branch (not detached `HEAD`).
+  - Runs a project-type-specific publish step.
+  - After publish succeeds, creates a release commit + annotated `v<next>` tag, then pushes the branch + tag.
+  - Prints a JSON result to stdout.
+  - Note: `--llm` is not accepted for postpublish.
 
 ### Logging and tracing (pipelines)
 
@@ -294,10 +314,10 @@ ai-publish prints machine-readable JSON to stdout for several commands. To keep 
 
 Environment variables:
 
--   `AI_PUBLISH_LOG_LEVEL`: `silent` | `info` | `debug` | `trace` (default: `info` for CLI runs, `silent` for programmatic usage)
--   `AI_PUBLISH_TRACE_TOOLS=1`: logs which bounded semantic tools were called, along with request counts and budget usage (no full diff/snippet dumping)
--   `AI_PUBLISH_TRACE_LLM=1`: logs LLM request/response metadata (provider + label + sizes)
--   `AI_PUBLISH_TRACE_LLM_OUTPUT`: prints raw structured LLM outputs (truncated) to stderr (enabled by default for CLI runs; set to `0` to disable)
+- `AI_PUBLISH_LOG_LEVEL`: `silent` | `info` | `debug` | `trace` (default: `info` for CLI runs, `silent` for programmatic usage)
+- `AI_PUBLISH_TRACE_TOOLS=1`: logs which bounded semantic tools were called, along with request counts and budget usage (no full diff/snippet dumping)
+- `AI_PUBLISH_TRACE_LLM=1`: logs LLM request/response metadata (provider + label + sizes)
+- `AI_PUBLISH_TRACE_LLM_OUTPUT`: prints raw structured LLM outputs (truncated) to stderr (enabled by default for CLI runs; set to `0` to disable)
 
 ### Recommended release flow
 
@@ -315,23 +335,31 @@ Environment variables:
 
 ### postpublish publish steps by project type
 
--   `npm`: runs `npm publish`
--   `dotnet`: runs `dotnet pack` then `dotnet nuget push` (requires `--manifest` and `AI_PUBLISH_NUGET_API_KEY` or `NUGET_API_KEY`)
--   `rust`: runs `cargo publish`
--   `go`: no publish command (the “publish” is the pushed tag)
--   `python`: runs `python -m build` then `python -m twine upload dist/*`
+- `npm`: runs `npm publish`
+- `dotnet`: runs `dotnet pack` then `dotnet nuget push` (requires `--manifest` and `AI_PUBLISH_NUGET_API_KEY` or `NUGET_API_KEY`)
+- `rust`: runs `cargo publish`
+- `go`: no publish command (the “publish” is the pushed tag)
+- `python`: runs `python -m build` then `python -m twine upload dist/*`
 
 ## Optional repo instructions (improves accuracy)
 
-ai-publish supports hierarchical instruction files (`AGENTS.md` and Copilot instruction files) to provide context-only configuration.
+ai-publish can scan the target repo (the repo you are releasing) for hierarchical instruction files and feed them into `changelog`, `release-notes`, and `prepublish` generation as **context-only configuration**.
+
+Supported instruction filenames:
+
+- `AGENTS.md`
+- `copilot-instructions.md`
+- `.github/copilot-instructions.md`
+
+Resolution is hierarchical (repo root → directories containing changed files); when multiple instruction files define the same directive key, the nearest file wins.
 
 One practical use: helping ai-publish identify what constitutes public API in repos that don’t follow the default heuristics (monorepos, unusual layouts, non-TypeScript projects).
 
 Add one of these directives to an instruction file:
 
--   `ai-publish.publicPathPrefixes: src/public, include, api`
--   `ai-publish.publicFilePaths: src/entrypoint.ts`
--   `ai-publish.internalPathPrefixes: generated, vendor`
+- `ai-publish.publicPathPrefixes: src/public, include, api`
+- `ai-publish.publicFilePaths: src/entrypoint.ts`
+- `ai-publish.internalPathPrefixes: generated, vendor`
 
 These directives influence surface classification (`public-api` vs `internal`) and therefore breaking-change heuristics and prioritization, but they do not change the core invariant: only `git diff <base>..HEAD` is evidence of what changed.
 
@@ -344,23 +372,25 @@ The same functionality is available as a library API with CLI-equivalent paramet
 For programmatic use, you may optionally provide your own `llmClient` implementation (alternate providers, wrappers/instrumentation, caching, or network-free tests). When `llmClient` is provided, it is used instead of constructing the default client from environment variables.
 
 ```ts
-import { generateChangelog, generateReleaseNotes } from "ai-publish"
+import { generateChangelog, generateReleaseNotes } from "ai-publish";
 
 await generateChangelog({
-	llm: "openai"
-	// llmClient: myCustomClient,
-	// base: "<sha>",
-	// outPath: "CHANGELOG.md",
-	// cwd: process.cwd(),
-})
+  llm: "openai",
+  // llmClient: myCustomClient,
+  // base: "<sha>",
+  // outPath: "CHANGELOG.md",
+  // indexRootDir: "/tmp/ai-publish",
+  // cwd: process.cwd(),
+});
 
 await generateReleaseNotes({
-	llm: "openai"
-	// llmClient: myCustomClient,
-	// base: "<sha>",
-	// outPath: "RELEASE_NOTES.md",
-	// cwd: process.cwd(),
-})
+  llm: "openai",
+  // llmClient: myCustomClient,
+  // base: "<sha>",
+  // outPath: "RELEASE_NOTES.md",
+  // indexRootDir: "/tmp/ai-publish",
+  // cwd: process.cwd(),
+});
 ```
 
 ## LLM providers
@@ -369,10 +399,10 @@ await generateReleaseNotes({
 
 Set environment variables:
 
--   `OPENAI_API_KEY`
--   `OPENAI_MODEL` (a chat model that supports JSON-schema structured outputs)
--   `OPENAI_BASE_URL` (optional; default `https://api.openai.com/v1`)
--   `OPENAI_TIMEOUT_MS` (optional)
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (a chat model that supports JSON-schema structured outputs)
+- `OPENAI_BASE_URL` (optional; default `https://api.openai.com/v1`)
+- `OPENAI_TIMEOUT_MS` (optional)
 
 Note: OpenAI mode uses Structured Outputs (JSON schema). Your selected model must support `response_format: { type: "json_schema", ... }` for Chat Completions.
 
@@ -380,79 +410,72 @@ Note: OpenAI mode uses Structured Outputs (JSON schema). Your selected model mus
 
 Set environment variables:
 
--   `AZURE_OPENAI_ENDPOINT` (e.g. `https://<resource-name>.openai.azure.com`)
--   `AZURE_OPENAI_API_KEY`
--   `AZURE_OPENAI_DEPLOYMENT` (your chat model deployment name)
--   `AZURE_OPENAI_API_VERSION` (optional; default `2024-08-01-preview`)
--   `AZURE_OPENAI_TIMEOUT_MS` (optional)
+- `AZURE_OPENAI_ENDPOINT` (e.g. `https://<resource-name>.openai.azure.com`)
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_DEPLOYMENT` (your chat model deployment name)
+- `AZURE_OPENAI_API_VERSION` (optional; default `2024-08-01-preview`)
+- `AZURE_OPENAI_TIMEOUT_MS` (optional)
 
 Note: LLM mode uses Structured Outputs (JSON schema) and requires Azure OpenAI API versions `2024-08-01-preview` or later.
 
 ## Testing
 
--   `npm test` runs network-free unit + integration tests.
--   End-to-end changelog and release notes generation are covered by integration tests that create temporary git repo fixtures and use a local stub LLM client so outputs are stable without network calls.
+- `npm test` runs network-free unit + integration tests.
+- End-to-end changelog and release notes generation are covered by integration tests that create temporary git repo fixtures and use a local stub LLM client so outputs are stable without network calls.
 
 ### Local semantic acceptance (optional)
 
 Additional integration tests can ask Azure OpenAI to judge whether the generated changelog/release notes accurately reflect the evidence.
 
--   Opt-in and skipped by default (so CI remains deterministic and network-free).
--   Local-only: skipped when `CI` is set.
--   Run with `npm run test:llm-eval` (requires the Azure env vars listed above).
--   Internally gated by `AI_PUBLISH_LLM_EVAL=1` (the script sets it for you).
+- Opt-in and skipped by default (so CI remains deterministic and network-free).
+- Local-only: skipped when `CI` is set.
+- Run with `npm run test:llm-eval` (requires the Azure env vars listed above).
+- Internally gated by `AI_PUBLISH_LLM_EVAL=1` (the script sets it for you).
 
 The evaluator uses structured JSON output with this schema:
 
--   `{ "accepted": boolean, "reason": string | null }`
+- `{ "accepted": boolean, "reason": string | null }`
 
 ### Local Azure generation (optional)
 
 An additional integration test can ask Azure OpenAI to generate changelog / release notes output end-to-end.
 
--   Opt-in and skipped by default (so CI remains deterministic and network-free).
--   Local-only: skipped when `CI` is set.
--   Run with `npm run test:llm-generate` (requires the Azure env vars listed above).
--   Internally gated by `AI_PUBLISH_LLM_GENERATE=1` (the script sets it for you).
+- Opt-in and skipped by default (so CI remains deterministic and network-free).
+- Local-only: skipped when `CI` is set.
+- Run with `npm run test:llm-generate` (requires the Azure env vars listed above).
+- Internally gated by `AI_PUBLISH_LLM_GENERATE=1` (the script sets it for you).
 
 ### When to run LLM tests
 
 If you change any of the following, run both `npm run test:llm-eval` and `npm run test:llm-generate` in addition to `npm test`:
 
--   `src/llm/*` (Azure/OpenAI clients)
--   LLM pipeline orchestration in `src/pipeline/*`
--   Output schemas/contracts used by the LLM passes
+- `src/llm/*` (Azure/OpenAI clients)
+- LLM pipeline orchestration in `src/pipeline/*`
+- Output schemas/contracts used by the LLM passes
 
 ## Troubleshooting
 
--   `Missing required flag: --llm`
+- `Missing required flag: --llm`
+  - `changelog`, `release-notes`, and `prepublish` require `--llm openai` or `--llm azure`.
 
-    -   `changelog`, `release-notes`, and `prepublish` require `--llm openai` or `--llm azure`.
+- `HEAD is already tagged ... Refusing to prepublish twice.`
+  - `prepublish` is intentionally one-shot per version. Move `HEAD` forward or delete the tag if you’re intentionally retrying.
 
--   `HEAD is already tagged ... Refusing to prepublish twice.`
+- `No user-facing changes detected (bumpType=none). Refusing to prepare a release.`
+  - ai-publish refuses to cut a release if the changelog model has no user-facing changes.
 
-    -   `prepublish` is intentionally one-shot per version. Move `HEAD` forward or delete the tag if you’re intentionally retrying.
+- `Missing .ai-publish/prepublish.json. Run prepublish first.`
+  - `postpublish` requires the intent file written by `prepublish`.
 
--   `No user-facing changes detected (bumpType=none). Refusing to prepare a release.`
+- `.NET postpublish requires --manifest <path/to.csproj>`
+  - Provide `--manifest` for `dotnet` project type.
 
-    -   ai-publish refuses to cut a release if the changelog model has no user-facing changes.
+- `Missing NuGet API key...`
+  - Set `AI_PUBLISH_NUGET_API_KEY` (or `NUGET_API_KEY`) before running `dotnet postpublish`.
 
--   `Missing .ai-publish/prepublish.json. Run prepublish first.`
-
-    -   `postpublish` requires the intent file written by `prepublish`.
-
--   `.NET postpublish requires --manifest <path/to.csproj>`
-
-    -   Provide `--manifest` for `dotnet` project type.
-
--   `Missing NuGet API key...`
-
-    -   Set `AI_PUBLISH_NUGET_API_KEY` (or `NUGET_API_KEY`) before running `dotnet postpublish`.
-
--   `Semantic pass request: expected JSON but got: ...`
-
-    -   This usually means the LLM provider returned extra text, multiple JSON objects, or truncated output due to output token limits.
-    -   ai-publish runs the semantic “tool request” phase in small batches across multiple rounds; if you still see this intermittently, enable request/response tracing to diagnose provider behavior:
-        -   `AI_PUBLISH_TRACE_LLM=1`
-        -   `AI_PUBLISH_LOG_LEVEL=debug`
-    -   On Azure, ensure `AZURE_OPENAI_API_VERSION` is `2024-08-01-preview` or later (Structured Outputs).
+- `Semantic pass request: expected JSON but got: ...`
+  - This usually means the LLM provider returned extra text, multiple JSON objects, or truncated output due to output token limits.
+  - ai-publish runs the semantic “tool request” phase in small batches across multiple rounds; if you still see this intermittently, enable request/response tracing to diagnose provider behavior:
+    - `AI_PUBLISH_TRACE_LLM=1`
+    - `AI_PUBLISH_LOG_LEVEL=debug`
+  - On Azure, ensure `AZURE_OPENAI_API_VERSION` is `2024-08-01-preview` or later (Structured Outputs).

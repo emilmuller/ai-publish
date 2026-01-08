@@ -16,14 +16,15 @@ import { renderReleaseNotesMarkdown } from "../releaseNotes/renderReleaseNotes"
 import { resolveHeadVersionTagFromGitTags } from "../version/resolveVersionBase"
 import { getCommitContext } from "../git/getCommitContext"
 import { logDebug, logInfo, traceToolsEnabled } from "../util/logger"
+import type { RepoFileSnippet, RepoSnippetAroundResult } from "../repo/types"
 
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
 }
 
-function debugLog(...args: any[]) {
+function debugLog(...args: unknown[]) {
 	if (!debugEnabled()) return
-	// eslint-disable-next-line no-console
+
 	console.error("[ai-publish][debug]", ...args)
 }
 
@@ -34,6 +35,8 @@ export async function runReleaseNotesPipeline(params: {
 	/** Optional label for rendering output (does not affect diff authority). */
 	headLabel?: string
 	cwd?: string
+	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
+	indexRootDir?: string
 	llmClient: LLMClient
 	/**
 	 * Optional bounded git commit message context (untrusted, non-authoritative).
@@ -50,7 +53,7 @@ export async function runReleaseNotesPipeline(params: {
 	logInfo("releaseNotes:start", { base: params.base, baseLabel: params.baseLabel, headLabel: params.headLabel })
 
 	// Always build the diff index first; it is the queryable authority.
-	const indexRes = await indexDiff({ base: params.base, cwd })
+	const indexRes = await indexDiff({ base: params.base, cwd, indexRootDir: params.indexRootDir })
 	logInfo("releaseNotes:indexed", {
 		baseSha: indexRes.baseSha,
 		headSha: indexRes.headSha,
@@ -77,7 +80,7 @@ export async function runReleaseNotesPipeline(params: {
 					maxCommits: params.commitContext.maxCommits,
 					maxTotalBytes: params.commitContext.maxTotalBytes,
 					maxBodyBytesPerCommit: params.commitContext.maxBodyBytesPerCommit
-			  })
+				})
 			: undefined
 
 	const mechanical = await params.llmClient.pass1Mechanical({
@@ -133,6 +136,7 @@ export async function runReleaseNotesPipeline(params: {
 				const collected = await fetchHunksWithBudget({
 					base: params.base,
 					cwd,
+					indexRootDir: params.indexRootDir,
 					allowedHunkIds,
 					state,
 					hunkIds: allowed,
@@ -149,7 +153,7 @@ export async function runReleaseNotesPipeline(params: {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
 				const trace = traceToolsEnabled()
 				if (trace) logInfo("tool:getRepoFileSnippets", { requests: requests.length, remainingRepoBytes })
-				let snippets: any[] = []
+				let snippets: RepoFileSnippet[] = []
 				try {
 					snippets = await getRepoFileSnippets({
 						cwd,
@@ -180,7 +184,7 @@ export async function runReleaseNotesPipeline(params: {
 				if (remainingRepoBytes <= 0) throw new Error("LLM repo context budget exhausted")
 				const trace = traceToolsEnabled()
 				if (trace) logInfo("tool:getRepoSnippetAround", { requests: requests.length, remainingRepoBytes })
-				let snippets: any[] = []
+				let snippets: RepoSnippetAroundResult[] = []
 				try {
 					snippets = await getRepoSnippetAround({
 						cwd,

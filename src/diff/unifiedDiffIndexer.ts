@@ -1,4 +1,3 @@
-import { createWriteStream } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { spawn } from "node:child_process"

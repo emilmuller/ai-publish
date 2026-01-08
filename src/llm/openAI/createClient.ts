@@ -83,7 +83,7 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 	async function chatJsonStructured<T>(
 		label: string,
 		messages: ChatMessage[],
-		format: any,
+		format: unknown,
 		params?: { maxTokens?: number }
 	): Promise<T> {
 		const trace = traceLLMEnabled()
@@ -338,14 +338,14 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 				)
 
 				const requestHunkIds = coerceStringArray(req.requestHunkIds)
-				const requestFileSnippets = coerceSnippetRequests((req as any).requestFileSnippets)
-				const requestSnippetsAround = coerceSnippetAroundRequests((req as any).requestSnippetsAround)
-				const requestFileSearches = coerceSearchRequests((req as any).requestFileSearches)
-				const requestRepoPathSearches = coerceRepoPathSearchRequests((req as any).requestRepoPathSearches)
-				const requestRepoSearches = coerceRepoSearchRequests((req as any).requestRepoSearches)
-				const requestRepoFileLists = coerceRepoFileListRequests((req as any).requestRepoFileLists)
-				const requestRepoFileMeta = coerceRepoFileMetaRequests((req as any).requestRepoFileMeta)
-				const done = Boolean((req as any).done)
+				const requestFileSnippets = coerceSnippetRequests(req.requestFileSnippets)
+				const requestSnippetsAround = coerceSnippetAroundRequests(req.requestSnippetsAround)
+				const requestFileSearches = coerceSearchRequests(req.requestFileSearches)
+				const requestRepoPathSearches = coerceRepoPathSearchRequests(req.requestRepoPathSearches)
+				const requestRepoSearches = coerceRepoSearchRequests(req.requestRepoSearches)
+				const requestRepoFileLists = coerceRepoFileListRequests(req.requestRepoFileLists)
+				const requestRepoFileMeta = coerceRepoFileMetaRequests(req.requestRepoFileMeta)
+				const done = Boolean(req.done)
 
 				const unique = takeUniqueCapped(
 					requestHunkIds.map((id) => id.trim()).filter(Boolean),
@@ -720,12 +720,16 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 				}
 			]
 
-			const out = await chatJsonStructured<any>(
-				"Editorial pass",
-				messages,
-				jsonSchemaResponseFormat("changelog_model", schemaChangelogModel),
-				{ maxTokens: 2400 }
-			)
+			const out = await chatJsonStructured<{
+				breakingChanges: unknown
+				added: unknown
+				changed: unknown
+				fixed: unknown
+				removed: unknown
+				internalTooling: unknown
+			}>("Editorial pass", messages, jsonSchemaResponseFormat("changelog_model", schemaChangelogModel), {
+				maxTokens: 2400
+			})
 
 			const model: Omit<ChangelogModel, "evidence"> = {
 				breakingChanges: assertBulletArray("breakingChanges", out.breakingChanges),
@@ -792,7 +796,7 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 				}
 			]
 
-			const out = await chatJsonStructured<any>(
+			const out = await chatJsonStructured<{ markdown: unknown; evidenceNodeIds: unknown }>(
 				"Release notes pass",
 				messages,
 				jsonSchemaResponseFormat("release_notes", schemaReleaseNotesOutput),

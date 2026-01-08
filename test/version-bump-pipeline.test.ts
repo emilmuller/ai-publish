@@ -63,5 +63,33 @@ describe("Version bump pipeline", () => {
 
 		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any
 		expect(pkg.version).toBe("1.2.3-beta.2")
+	}, 60_000)
+
+	test("no tags: infers previousVersion from package.json and base from manifest history", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		// Seed a public API file before the version-setting commit, so later edits are a patch.
+		await commitChange(dir, "src/public/api.ts", "export const foo = 0\n", "seed public api")
+
+		// Set the package version (this is the commit we should infer as base when no tags exist).
+		const baseCommit = await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "x", version: "5.2.0" }, null, 2) + "\n",
+			"set version 5.2.0"
+		)
+
+		// User-visible change after the version commit.
+		await commitChange(dir, "src/public/api.ts", "export const foo = 1\n", "public change")
+
+		const res = await runVersionBumpPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
+		expect(res.previousTag).toBeNull()
+		expect(res.previousVersion).toBe("5.2.0")
+		expect(res.base).toBe(baseCommit)
+		expect(res.bumpType).toBe("patch")
+		expect(res.nextVersion).toBe("5.2.1")
+
+		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any
+		expect(pkg.version).toBe("5.2.1")
 	})
 })

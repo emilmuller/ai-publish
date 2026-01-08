@@ -7,7 +7,9 @@ export type RunPythonOptions = {
 }
 
 function asENOENT(err: unknown): { code?: unknown; message?: string } {
-	return typeof err === "object" && err ? (err as any) : {}
+	if (!err || typeof err !== "object") return {}
+	const e = err as { code?: unknown; message?: unknown }
+	return { code: e.code, message: typeof e.message === "string" ? e.message : undefined }
 }
 
 async function runPythonCaptureWithCommand(

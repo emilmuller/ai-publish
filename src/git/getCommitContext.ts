@@ -17,7 +17,7 @@ export type CommitContext = {
 
 function normalizeCommitText(s: string): string {
 	// Commit messages should not contain NULs, but treat input as untrusted.
-	return s.replace(/\u0000/g, "").replace(/\r\n/g, "\n")
+	return s.split("\u0000").join("").replace(/\r\n/g, "\n")
 }
 
 function truncateUtf8(input: string, maxBytes: number, marker: string): { value: string; truncated: boolean } {

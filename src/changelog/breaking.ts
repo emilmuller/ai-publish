@@ -168,10 +168,10 @@ function entrypointReferencesFile(entrypointText: string, entrypointPath: string
 	const specs = moduleSpecifiersFromEntrypoint(entrypointPath, targetFilePath)
 	for (const spec of specs) {
 		// Conservative: only treat it as a re-export when it appears as a quoted module specifier.
-		const r = new RegExp(`[\\s(]from\\s+['\"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['\"]`)
+		const r = new RegExp(`[\\s(]from\\s+['"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['"]`)
 		if (r.test(entrypointText)) return true
 		// Allow CommonJS require as a fallback signal.
-		const r2 = new RegExp(`require\\(\\s*['\"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['\"]\\s*\\)`)
+		const r2 = new RegExp(`require\\(\\s*['"]${escapeRegExp(spec)}(?:\\.ts|\\.js|\\.mjs|\\.cjs)?['"]\\s*\\)`)
 		if (r2.test(entrypointText)) return true
 	}
 	return false

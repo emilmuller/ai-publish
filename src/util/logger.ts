@@ -59,7 +59,7 @@ function emit(kind: "info" | "debug" | "trace", event: string, data?: unknown): 
 	if (levelRank(cfg.level) < levelRank(kind as LogLevel)) return
 	const suffix = data === undefined ? "" : " " + safeJson(data, 16_000)
 	// IMPORTANT: always log to stderr so stdout JSON remains parseable in pipelines.
-	// eslint-disable-next-line no-console
+	 
 	console.error(`[ai-publish][${kind}] ${event}${suffix}`)
 }
 
@@ -92,13 +92,13 @@ export function logLLMOutput(event: string, content: string, opts?: { maxChars?:
 	const maxChars = opts?.maxChars ?? 24_000
 	const s = content ?? ""
 	const shown = s.length <= maxChars ? s : s.slice(0, Math.max(0, maxChars - 20)) + "\n…(truncated)"
-	// eslint-disable-next-line no-console
+	 
 	console.error(`[ai-publish][llm-output] ${event}\n${shown}`)
 }
 
 export function logLLMStreamStart(event: string): void {
 	if (!traceLLMOutputEnabled()) return
-	// eslint-disable-next-line no-console
+	 
 	console.error(`[ai-publish][llm-stream] ${event}`)
 }
 
@@ -108,7 +108,7 @@ export function logLLMStreamChunk(chunk: string): void {
 	try {
 		process.stderr.write(chunk)
 	} catch {
-		// eslint-disable-next-line no-console
+		 
 		console.error(chunk)
 	}
 }
@@ -118,7 +118,7 @@ export function logLLMStreamEnd(): void {
 	try {
 		process.stderr.write("\n")
 	} catch {
-		// eslint-disable-next-line no-console
+		 
 		console.error("")
 	}
 }
