@@ -48,6 +48,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepack": "npm run build && node scripts/verify-cli-shebang.cjs",
     "release": "npm run build && node dist/cli.js prepublish --llm azure && node dist/cli.js postpublish",
     "format:md": "prettier --write \"**/*.md\"",
     "format:md:check": "prettier --check \"**/*.md\"",
