@@ -1,4 +1,12 @@
 # Changelog
+## [3.1.0] - 2026-01-13
+
+### Added
+- Added a pre-publish check to ensure the generated CLI entry is executable (has the Node shebang).
+
+### Changed
+- Updated the build output so the CLI is produced as CommonJS, improving compatibility with Node execution.
+- Improved build configuration type-safety to reduce build-time misconfiguration risk.
 ## [3.0.0] - 2026-01-13
 
 ### Added
