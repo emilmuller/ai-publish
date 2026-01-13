@@ -1,4 +1,15 @@
 # Changelog
+## [3.0.0] - 2026-01-13
+
+### Added
+- Added a way to run a custom publish command during postpublish.
+
+### Changed
+- **BREAKING:** Programmatic postpublish options now validate that you can’t set both a custom publish command and “skip publish” at the same time.
+- .NET NuGet publishing now uses default NuGet configuration unless a source is explicitly provided via environment variables.
+- .NET postpublish now prefers pushing the package that matches the intended release version when available.
+- Postpublish now chooses the publish step more flexibly: it can use an injected runner, skip publishing, run a provided command, or fall back to the default publish behavior.
+- Performance and stability improvements.
 ## [2.1.0] - 2026-01-08
 
 ### Added
