@@ -1,4 +1,9 @@
 # Changelog
+## [3.1.1] - 2026-01-13
+
+### Changed
+- Updated README.md.
+- Performance and stability improvements.
 ## [3.1.0] - 2026-01-13
 
 ### Added
