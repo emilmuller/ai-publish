@@ -102,7 +102,14 @@ describe("cli args", () => {
 
 	test("parses postpublish", () => {
 		const parsed = parseCliArgs(["postpublish"])
-		expect(parsed).toEqual({ command: "postpublish", projectType: "npm", manifestPath: undefined, llm: undefined })
+		expect(parsed).toEqual({
+			command: "postpublish",
+			projectType: "npm",
+			manifestPath: undefined,
+			publishCommand: undefined,
+			skipPublish: false,
+			llm: undefined
+		})
 	})
 
 	test("rejects --prepend (removed flag)", () => {

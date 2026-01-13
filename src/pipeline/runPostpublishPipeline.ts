@@ -7,28 +7,12 @@ import { runPythonOrThrow } from "../python/runPython"
 import { readFile } from "node:fs/promises"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
-import { dirname, resolve } from "node:path"
+import { resolve } from "node:path"
 import { runDotnetOrThrow } from "../dotnet/runDotnet"
 import { runGitOrThrow } from "../git/runGit"
-
-async function listDotnetPackages(params: { cwd: string; projectPath: string }): Promise<string[]> {
-	const projectAbs = resolve(params.cwd, params.projectPath)
-	const projectDir = dirname(projectAbs)
-	const outDir = join(projectDir, "bin", "Release")
-
-	const entries = await readdir(outDir, { withFileTypes: true })
-	const pkgs = entries
-		.filter((e) => e.isFile())
-		.map((e) => e.name)
-		.filter((n) => n.endsWith(".nupkg") && !n.endsWith(".snupkg"))
-		.sort((a, b) => a.localeCompare(b))
-		.map((n) => join(outDir, n))
-
-	if (!pkgs.length) {
-		throw new Error(`No .nupkg files found under ${outDir}`)
-	}
-	return pkgs
-}
+import { listDotnetPackages } from "../dotnet/listDotnetPackages"
+import { runShellOrThrow } from "../util/runShell"
+import { buildDotnetNugetPushArgs } from "../dotnet/dotnetNugetPushArgs"
 
 async function listPythonDistArtifacts(cwd: string): Promise<string[]> {
 	const distDir = join(cwd, "dist")
@@ -52,6 +36,7 @@ async function defaultPublishRunner(params: {
 	cwd: string
 	projectType: ManifestType
 	manifestPath?: string
+	predictedTag?: string
 }): Promise<void> {
 	if (params.projectType === "npm") {
 		// If ai-publish is invoked from npm's own `postpublish` lifecycle during `npm publish`,
@@ -82,8 +67,9 @@ async function defaultPublishRunner(params: {
 			throw new Error("dotnet postpublish requires --manifest <path/to.csproj>")
 		}
 
-		const source =
-			process.env.AI_PUBLISH_NUGET_SOURCE ?? process.env.NUGET_SOURCE ?? "https://api.nuget.org/v3/index.json"
+		const expectedVersion = params.predictedTag ? params.predictedTag.replace(/^v/, "") : undefined
+
+		const source = process.env.AI_PUBLISH_NUGET_SOURCE ?? process.env.NUGET_SOURCE
 		const apiKey = process.env.AI_PUBLISH_NUGET_API_KEY ?? process.env.NUGET_API_KEY
 		if (!apiKey) {
 			throw new Error(
@@ -93,14 +79,11 @@ async function defaultPublishRunner(params: {
 
 		// User is expected to build/pack before calling postpublish.
 		// We only push already-produced .nupkg files from the conventional bin/Release output.
-		const pkgs = await listDotnetPackages({ cwd: params.cwd, projectPath })
+		const pkgs = await listDotnetPackages({ cwd: params.cwd, projectPath, expectedVersion })
 		for (const pkgAbs of pkgs) {
-			await runDotnetOrThrow(
-				["nuget", "push", pkgAbs, "--source", source, "--api-key", apiKey, "--skip-duplicate"],
-				{
-					cwd: params.cwd
-				}
-			)
+			await runDotnetOrThrow(buildDotnetNugetPushArgs({ pkgAbs, source, apiKey }), {
+				cwd: params.cwd
+			})
 		}
 		return
 	}
@@ -132,6 +115,8 @@ export async function runPostpublishPipeline(params: {
 	/** Present only for CLI parity; not used by postpublish. */
 	llmClient?: LLMClient
 	publishRunner?: PublishRunner
+	publishCommand?: string
+	skipPublish?: boolean
 }): Promise<{ tag: string; branch: string; remote: string }> {
 	const cwd = params.cwd ?? process.cwd()
 	const remote = params.remote ?? "origin"
@@ -215,10 +200,20 @@ export async function runPostpublishPipeline(params: {
 		}
 	}
 
-	const publish =
-		params.publishRunner ??
-		((p: { cwd: string }) => defaultPublishRunner({ ...p, projectType, manifestPath: params.manifestPath }))
-	await publish({ cwd })
+	if (params.publishRunner) {
+		await params.publishRunner({ cwd })
+	} else if (params.skipPublish) {
+		// Explicit opt-out: consumers can run publish themselves.
+	} else if (params.publishCommand) {
+		await runShellOrThrow({ cwd, command: params.publishCommand })
+	} else {
+		await defaultPublishRunner({
+			cwd,
+			projectType,
+			manifestPath: params.manifestPath,
+			predictedTag: intent.predictedTag
+		})
+	}
 
 	// Publish succeeded. Now create release commit + annotated tag, then push.
 	const { commitSha } = await createReleaseCommit({ cwd, paths: intent.pathsToCommit, message: intent.commitMessage })

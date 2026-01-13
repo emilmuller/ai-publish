@@ -103,6 +103,8 @@ type ParsedArgs =
 			command: "postpublish"
 			projectType: "npm" | "dotnet" | "rust" | "python" | "go"
 			manifestPath?: string
+			publishCommand?: string
+			skipPublish?: boolean
 			llm?: "azure" | "openai"
 	  }
 
@@ -112,7 +114,7 @@ export function formatUsage(): string {
 		"  ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
 		"  ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
 		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--debug]",
-		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--debug]",
+		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--publish-command <cmd>] [--skip-publish] [--debug]",
 		"  ai-publish --help",
 		"",
 		"Notes:",
@@ -198,6 +200,8 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	let commitContextBytes: number | undefined
 	let commitContextCommits: number | undefined
 	let indexRootDir: string | undefined
+	let publishCommand: string | undefined
+	let skipPublish = false
 
 	const seenFlags = new Set<string>()
 
@@ -323,6 +327,21 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 				i += 1
 				break
 			}
+			case "--publish-command": {
+				if (command !== "postpublish") {
+					throw new Error("--publish-command is only supported for postpublish")
+				}
+				publishCommand = takeValue(args, i, token)
+				i += 1
+				break
+			}
+			case "--skip-publish": {
+				if (command !== "postpublish") {
+					throw new Error("--skip-publish is only supported for postpublish")
+				}
+				skipPublish = true
+				break
+			}
 			default:
 				throw new Error(`Unknown flag: ${token}`)
 		}
@@ -389,7 +408,12 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			...(indexRootDir ? { indexRootDir } : {})
 		}
 	}
-	if (command === "postpublish") return { command: "postpublish", projectType, manifestPath, llm }
+	if (command === "postpublish") {
+		if (skipPublish && publishCommand) {
+			throw new Error("--skip-publish and --publish-command are mutually exclusive")
+		}
+		return { command: "postpublish", projectType, manifestPath, publishCommand, skipPublish, llm }
+	}
 	throw new Error("Internal error: unreachable")
 }
 
@@ -561,7 +585,9 @@ async function main() {
 			cwd: process.cwd(),
 			remote: "origin",
 			projectType: parsed.projectType,
-			manifestPath: parsed.manifestPath
+			manifestPath: parsed.manifestPath,
+			publishCommand: parsed.publishCommand,
+			skipPublish: parsed.skipPublish
 		})
 		markdown = ""
 

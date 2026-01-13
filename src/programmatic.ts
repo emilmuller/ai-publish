@@ -92,10 +92,16 @@ export type PrepublishResult = {
 export type PostpublishArgs = {
 	/** Which consumer project type is being published. Defaults to `npm`. */
 	projectType?: ManifestType
+	/** Project manifest path (e.g. path/to.csproj for dotnet). */
+	manifestPath?: string
 	/** Git remote to push to. Defaults to `origin`. */
 	remote?: string
 	/** Optional injection for testing. */
 	publishRunner?: PublishRunner
+	/** Optional: run this command as the publish step (CLI-equivalent). */
+	publishCommand?: string
+	/** Optional: skip the publish step entirely. */
+	skipPublish?: boolean
 	/** LLM provider (same as CLI `--llm`). Present for parity; not used by postpublish. */
 	llm: "azure" | "openai"
 	/** Working directory to run in (defaults to `process.cwd()`). */
@@ -258,12 +264,18 @@ export async function prepublish(args: PrepublishArgs): Promise<PrepublishResult
 export async function postpublish(args: PostpublishArgs): Promise<PostpublishResult> {
 	const cwd = args.cwd ?? process.cwd()
 	const llmClient = getLLMClient({ llm: args.llm, cwd, llmClient: args.llmClient })
+	if (args.skipPublish && args.publishCommand) {
+		throw new Error("postpublish: skipPublish and publishCommand are mutually exclusive")
+	}
 
 	const res = await runPostpublishPipeline({
 		cwd,
 		remote: args.remote,
 		projectType: args.projectType,
+		manifestPath: args.manifestPath,
 		publishRunner: args.publishRunner,
+		publishCommand: args.publishCommand,
+		skipPublish: args.skipPublish,
 		llmClient
 	})
 

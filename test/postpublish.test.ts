@@ -126,4 +126,28 @@ describe("postpublish pipeline", () => {
 		const remoteTag = await gitShowRef(remoteDir, "refs/tags/v1.2.4")
 		expect(remoteTag.found).toBe(false)
 	}, 60_000)
+
+	test("can skip publish step when explicitly requested", async () => {
+		const { dir } = await makeTempGitRepo()
+		const { remoteDir } = await makeBareRemoteAndAddOrigin(dir)
+
+		await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.2.3" }, null, 2) + "\n",
+			"add package"
+		)
+		await commitChange(dir, "config.yml", "name: base\n", "add config base")
+		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.2.3", tagCommit], { cwd: dir })
+		await commitChange(dir, "config.yml", "name: changed\n", "change config")
+
+		await runPrepublishPipeline({ cwd: dir, llmClient: makeDeterministicTestLLMClient() })
+
+		const post = await runPostpublishPipeline({ cwd: dir, remote: "origin", skipPublish: true })
+		expect(post.tag).toBe("v1.2.4")
+
+		const remoteTag = await gitShowRef(remoteDir, "refs/tags/v1.2.4")
+		expect(remoteTag.found).toBe(true)
+	}, 120_000)
 })
