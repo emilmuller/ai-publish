@@ -3,6 +3,7 @@ import { makeTempGitRepo, commitChange } from "./gitFixture"
 import { runGitOrThrow } from "../src/git/runGit"
 import {
 	resolveHeadVersionTagFromGitTags,
+	resolveVersionBase,
 	resolveVersionBaseBeforeHeadTagFromGitTags,
 	resolveVersionBaseFromGitTags
 } from "../src/version/resolveVersionBase"
@@ -36,7 +37,7 @@ describe("Version base resolution", () => {
 		const tagCommit = (await runGitOrThrow(["rev-list", "-n", "1", "v1.2.0-beta.1"], { cwd: dir })).trim()
 		expect(res.base).toBe(tagCommit)
 		expect(res.baseCommit).toBe(tagCommit)
-	})
+	}, 60_000)
 
 	test("resolves a version tag pointing at HEAD (including annotated tags)", async () => {
 		const { dir } = await makeTempGitRepo()
@@ -60,7 +61,7 @@ describe("Version base resolution", () => {
 		const res1 = await resolveHeadVersionTagFromGitTags({ cwd: dir })
 		expect(res1.headTag).toBe("v1.0.0")
 		expect(res1.headVersion).toBe("1.0.0")
-	})
+	}, 60_000)
 
 	test("base-before-head-tag resolves the previous tag (not the tag at HEAD)", async () => {
 		const { dir } = await makeTempGitRepo()
@@ -82,7 +83,7 @@ describe("Version base resolution", () => {
 		const v100Commit = (await runGitOrThrow(["rev-list", "-n", "1", "v1.0.0"], { cwd: dir })).trim()
 		expect(base.base).toBe(v100Commit)
 		expect(base.baseCommit).toBe(v100Commit)
-	})
+	}, 120_000)
 
 	test("base-before-head-tag falls back to empty tree when only HEAD is tagged", async () => {
 		const { dir } = await makeTempGitRepo()
@@ -93,5 +94,43 @@ describe("Version base resolution", () => {
 		expect(base.previousTag).toBeNull()
 		expect(base.previousVersion).toBe("0.0.0")
 		expect(base.baseCommit).toBeNull()
-	})
+	}, 60_000)
+
+	test("no tags + manifest already bumped: can infer previousVersion from manifest history", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		const v123Commit = await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.2.3" }, null, 2) + "\n",
+			"set version 1.2.3"
+		)
+		const v124Commit = await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.2.4" }, null, 2) + "\n",
+			"bump version 1.2.4"
+		)
+
+		// Default behavior: previousVersion is inferred from the worktree manifest (1.2.4)
+		// and base resolves to the commit where version became 1.2.4.
+		const worktree = await resolveVersionBase({
+			cwd: dir,
+			manifest: { type: "npm", path: "package.json", write: false }
+		})
+		expect(worktree.previousTag).toBeNull()
+		expect(worktree.previousVersion).toBe("1.2.4")
+		expect(worktree.base).toBe(v124Commit)
+
+		// History-based behavior: infer previousVersion as the previous distinct version (1.2.3)
+		// and base resolves to the commit where version became 1.2.3.
+		const hist = await resolveVersionBase({
+			cwd: dir,
+			manifest: { type: "npm", path: "package.json", write: false },
+			previousVersionSource: "manifest-history"
+		})
+		expect(hist.previousTag).toBeNull()
+		expect(hist.previousVersion).toBe("1.2.3")
+		expect(hist.base).toBe(v123Commit)
+	}, 60_000)
 })

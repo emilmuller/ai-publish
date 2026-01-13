@@ -23,6 +23,8 @@ export async function runVersionBumpPipeline(params: {
 	tagPrefix?: string
 	/** Optional override for previous version (useful for first-run repos without tags). */
 	previousVersion?: string
+	/** Optional override for how previousVersion is inferred when no tags exist. */
+	previousVersionSource?: "manifest" | "manifest-history"
 	/** Optional override for base revision (useful to force a diff boundary). */
 	base?: string
 	/** Backwards-compatible alias for npm manifests. Prefer `manifest`. */
@@ -54,12 +56,12 @@ export async function runVersionBumpPipeline(params: {
 		(manifestType === "npm"
 			? "package.json"
 			: manifestType === "rust"
-			? "Cargo.toml"
-			: manifestType === "python"
-			? "pyproject.toml"
-			: manifestType === "go"
-			? "go.mod"
-			: undefined)
+				? "Cargo.toml"
+				: manifestType === "python"
+					? "pyproject.toml"
+					: manifestType === "go"
+						? "go.mod"
+						: undefined)
 	if (!manifestRelPath) {
 		throw new Error(`Missing manifest path for type: ${manifestType}`)
 	}
@@ -71,6 +73,7 @@ export async function runVersionBumpPipeline(params: {
 		tagPrefix: params.tagPrefix,
 		manifest: { type: manifestType, path: manifestRelPath, write: false },
 		previousVersionOverride: params.previousVersion,
+		previousVersionSource: params.previousVersionSource,
 		baseOverride: params.base
 	})
 	const previousVersion = resolvedBase.previousVersion

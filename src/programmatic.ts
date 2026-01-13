@@ -57,6 +57,8 @@ export type PrepublishArgs = {
 	base?: string
 	/** Optional previous version override (same as CLI `--previous-version`). */
 	previousVersion?: string
+	/** Optional override for how previousVersion is inferred when no tags exist. */
+	previousVersionSource?: "manifest" | "manifest-history"
 	/** Backwards-compatible alias for npm manifests. Prefer `manifest`. */
 	packageJsonPath?: string
 	/** Which project manifest to update. Defaults to `{ type: "npm", path: "package.json", write: true }`. */
@@ -249,6 +251,7 @@ export async function prepublish(args: PrepublishArgs): Promise<PrepublishResult
 		indexRootDir: args.indexRootDir,
 		base: args.base,
 		previousVersion: args.previousVersion,
+		previousVersionSource: args.previousVersionSource,
 		packageJsonPath: args.packageJsonPath,
 		manifest: args.manifest,
 		changelogOutPath: args.changelogOutPath

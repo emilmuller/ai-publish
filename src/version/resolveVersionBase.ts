@@ -151,6 +151,40 @@ async function inferBaseCommitFromManifestHistory(params: {
 	return null
 }
 
+async function inferPreviousDistinctVersionFromManifestHistory(params: {
+	cwd: string
+	manifestType: ManifestType
+	manifestRelPath: string
+	currentVersion: string
+	maxCommitsToScan: number
+}): Promise<string | null> {
+	const out = await runGitOrThrow(["log", "--format=%H", "--", toGitPath(params.manifestRelPath)], {
+		cwd: params.cwd
+	})
+	const commits = out
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.filter(Boolean)
+		.slice(0, params.maxCommitsToScan)
+
+	for (const sha of commits) {
+		const versionAt = await readManifestVersionAtCommit({
+			cwd: params.cwd,
+			manifestType: params.manifestType,
+			manifestRelPath: params.manifestRelPath,
+			commitSha: sha
+		})
+		if (!versionAt) continue
+		// Only consider valid semver versions.
+		const normalized = semver.valid(versionAt)
+		if (!normalized) continue
+		if (semver.eq(normalized, params.currentVersion)) continue
+		return normalized
+	}
+
+	return null
+}
+
 export async function resolveVersionBase(params: {
 	cwd?: string
 	tagPrefix?: string
@@ -159,6 +193,12 @@ export async function resolveVersionBase(params: {
 	baseOverride?: string
 	/** Explicit previous version (wins for previousVersion selection). */
 	previousVersionOverride?: string
+	/**
+	 * How to infer previousVersion when no version tags exist.
+	 * - manifest (default): use the manifest version in the worktree
+	 * - manifest-history: use the previous distinct version found in the manifest's git history (falls back to worktree)
+	 */
+	previousVersionSource?: "manifest" | "manifest-history"
 	maxHistoryCommitsToScan?: number
 }): Promise<ResolvedVersionBase> {
 	const cwd = params.cwd ?? process.cwd()
@@ -196,7 +236,25 @@ export async function resolveVersionBase(params: {
 				previousVersion = "0.0.0"
 				previousTag = null
 			} else {
-				previousVersion = await inferManifestVersionFromWorktree({ cwd, manifestType, manifestRelPath })
+				const worktreeVersionRaw = await inferManifestVersionFromWorktree({
+					cwd,
+					manifestType,
+					manifestRelPath
+				})
+				const worktreeVersion = normalizeSemverOrThrow(worktreeVersionRaw, "manifest version")
+
+				if ((params.previousVersionSource ?? "manifest") === "manifest-history") {
+					const inferredPrev = await inferPreviousDistinctVersionFromManifestHistory({
+						cwd,
+						manifestType,
+						manifestRelPath,
+						currentVersion: worktreeVersion,
+						maxCommitsToScan
+					})
+					previousVersion = inferredPrev ?? worktreeVersion
+				} else {
+					previousVersion = worktreeVersion
+				}
 				previousTag = null
 			}
 		}

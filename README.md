@@ -247,6 +247,7 @@ ai-publish treats git tags of the form `v<semver>` as the source of truth for re
 
 - For `changelog` and `release-notes`: if `--base` is omitted, the diff base defaults to the most recent reachable `v<semver>` tag commit (otherwise the empty tree).
 - For `prepublish` and version bumping: if no version tags exist, ai-publish infers `previousVersion` from the selected manifest (or you can set it explicitly via `--previous-version`), and it may infer a base commit from manifest history when possible.
+    - If your repo has no tags and the manifest is already bumped to the next version, use `--previous-version-from-manifest-history` to infer the previous distinct version from the manifest's git history.
 - `prepublish` computes a predicted `v<next>` and prepares release outputs locally.
 - `postpublish` creates a local release commit and an annotated tag `v<next>` pointing at that commit after publish succeeds, then pushes the branch + tag.
 - Manifests (e.g. `package.json`, `.csproj`) are updated to match `v<next>` (unless `--no-write`).
@@ -261,7 +262,7 @@ LLM providers are mentioned below; OpenAI is listed first.
 ```text
 ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
 ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
-ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--debug]
+ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--debug]
 ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--publish-command <cmd>] [--skip-publish] [--debug]
 ai-publish --help
 ```

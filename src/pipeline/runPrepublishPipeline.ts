@@ -25,7 +25,7 @@ function debugEnabled(): boolean {
 
 function debugLog(...args: unknown[]) {
 	if (!debugEnabled()) return
-	 
+
 	console.error("[ai-publish][debug]", ...args)
 }
 
@@ -73,6 +73,8 @@ export async function runPrepublishPipeline(params: {
 	base?: string
 	/** Optional override for previous version (useful for first-run repos without tags and go projects). */
 	previousVersion?: string
+	/** Optional override for how previousVersion is inferred when no tags exist. */
+	previousVersionSource?: "manifest" | "manifest-history"
 }): Promise<{
 	previousVersion: string
 	previousTag: string | null
@@ -112,12 +114,12 @@ export async function runPrepublishPipeline(params: {
 		(manifestType === "npm"
 			? "package.json"
 			: manifestType === "rust"
-			? "Cargo.toml"
-			: manifestType === "python"
-			? "pyproject.toml"
-			: manifestType === "go"
-			? "go.mod"
-			: undefined)
+				? "Cargo.toml"
+				: manifestType === "python"
+					? "pyproject.toml"
+					: manifestType === "go"
+						? "go.mod"
+						: undefined)
 	if (!manifestRelPath) throw new Error(`Missing manifest path for type: ${manifestType}`)
 	const absManifestPath = resolve(cwd, manifestRelPath)
 	const relManifestPath = toGitPath(relative(cwd, absManifestPath))
@@ -127,7 +129,8 @@ export async function runPrepublishPipeline(params: {
 		cwd,
 		manifest: { type: manifestType, path: relManifestPath, write: false },
 		baseOverride: params.base,
-		previousVersionOverride: params.previousVersion
+		previousVersionOverride: params.previousVersion,
+		previousVersionSource: params.previousVersionSource
 	})
 	debugLog("prepublishPipeline:base", {
 		base: resolvedBase.base,
@@ -159,7 +162,31 @@ export async function runPrepublishPipeline(params: {
 	debugLog("prepublishPipeline:computedVersion", { bumpType, nextVersion })
 
 	if (bumpType === "none") {
-		throw new Error("No user-facing changes detected (bumpType=none). Refusing to prepare a release.")
+		const modelCounts = {
+			breaking: changelogGenerated.model.breakingChanges.length,
+			added: changelogGenerated.model.added.length,
+			changed: changelogGenerated.model.changed.length,
+			fixed: changelogGenerated.model.fixed.length,
+			removed: changelogGenerated.model.removed.length,
+			internalTooling: changelogGenerated.model.internalTooling.length
+		}
+		const prevTagLabel = resolvedBase.previousTag ?? "<none>"
+		const baseLabelForError = resolvedBase.previousTag ?? resolvedBase.base
+		throw new Error(
+			[
+				"No user-facing changes detected (bumpType=none). Refusing to prepare a release.",
+				"",
+				`Resolved previousVersion=${resolvedBase.previousVersion}, previousTag=${prevTagLabel}, base=${baseLabelForError}.`,
+				`Changelog section counts: breaking=${modelCounts.breaking}, added=${modelCounts.added}, changed=${modelCounts.changed}, fixed=${modelCounts.fixed}, removed=${modelCounts.removed}, internalTooling=${modelCounts.internalTooling}.`,
+				"",
+				"This typically means either:",
+				"- The diff range contains only internal/tooling/docs changes (which do not trigger a release bump), or",
+				"- The computed diff range is empty (base resolves to HEAD).",
+				"",
+				"If you're bootstrapping a repo with no version tags, either create a baseline version tag for the current version, or run prepublish with explicit --base (and optionally --previous-version) to define the diff range.",
+				"To debug base selection, set AI_PUBLISH_DEBUG_CLI=1."
+			].join("\n")
+		)
 	}
 	assertVersionIncreases(resolvedBase.previousVersion, nextVersion)
 

@@ -90,6 +90,7 @@ type ParsedArgs =
 			command: "prepublish"
 			base?: string
 			previousVersion?: string
+			previousVersionSource: "manifest" | "manifest-history"
 			projectType: "npm" | "dotnet" | "rust" | "python" | "go"
 			manifestPath?: string
 			writeManifest: boolean
@@ -113,7 +114,7 @@ export function formatUsage(): string {
 		"Usage:",
 		"  ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
 		"  ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
-		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--publish-command <cmd>] [--skip-publish] [--debug]",
 		"  ai-publish --help",
 		"",
@@ -122,6 +123,7 @@ export function formatUsage(): string {
 		"  - --debug enables verbose stderr diagnostics.",
 		"  - If --base is omitted, changelog/release-notes diff from the previous version tag commit (v<semver>) when present, otherwise from the empty tree.",
 		"  - prepublish/version-bump: when no tags exist, previousVersion is inferred from the selected manifest (or set via --previous-version), and base may be inferred from manifest history.",
+		"    - If your repo has no tags and the manifest is already bumped to the next version, use --previous-version-from-manifest-history to infer the previous distinct version from git history.",
 		"  - Commit messages are enabled by default as untrusted hints (never treated as evidence of changes).",
 		"    - Default: --commit-context snippet --commit-context-bytes 65536 --commit-context-commits 200",
 		"    - Disable: --commit-context none",
@@ -196,6 +198,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	let packageJsonPath: string | undefined = "package.json"
 	let llm: "azure" | "openai" | undefined
 	let previousVersion: string | undefined
+	let previousVersionSource: "manifest" | "manifest-history" = "manifest"
 	let commitContextMode: "none" | "snippet" | "full" | undefined
 	let commitContextBytes: number | undefined
 	let commitContextCommits: number | undefined
@@ -237,6 +240,13 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 				}
 				previousVersion = takeValue(args, i, token)
 				i += 1
+				break
+			}
+			case "--previous-version-from-manifest-history": {
+				if (command !== "prepublish") {
+					throw new Error("--previous-version-from-manifest-history is only supported for prepublish")
+				}
+				previousVersionSource = "manifest-history"
 				break
 			}
 			case "--out": {
@@ -398,6 +408,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			command: "prepublish",
 			base,
 			previousVersion,
+			previousVersionSource,
 			projectType,
 			manifestPath,
 			writeManifest,
@@ -568,6 +579,7 @@ async function main() {
 			indexRootDir: parsed.indexRootDir,
 			base: parsed.base,
 			previousVersion: parsed.previousVersion,
+			previousVersionSource: parsed.previousVersionSource,
 			packageJsonPath: parsed.packageJsonPath,
 			manifest: {
 				type: parsed.projectType,

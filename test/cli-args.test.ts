@@ -61,6 +61,7 @@ describe("cli args", () => {
 			command: "prepublish",
 			base: undefined,
 			previousVersion: undefined,
+			previousVersionSource: "manifest",
 			projectType: "npm",
 			manifestPath: undefined,
 			writeManifest: true,
@@ -90,6 +91,24 @@ describe("cli args", () => {
 			command: "prepublish",
 			base: "HEAD~1",
 			previousVersion: "9.9.9",
+			previousVersionSource: "manifest",
+			projectType: "npm",
+			manifestPath: undefined,
+			writeManifest: true,
+			packageJsonPath: "package.json",
+			changelogOutPath: "CHANGELOG.md",
+			outProvided: false,
+			llm: "azure"
+		})
+	})
+
+	test("parses --previous-version-from-manifest-history for prepublish", () => {
+		const parsed = parseCliArgs(["prepublish", "--previous-version-from-manifest-history", "--llm", "azure"])
+		expect(parsed).toEqual({
+			command: "prepublish",
+			base: undefined,
+			previousVersion: undefined,
+			previousVersionSource: "manifest-history",
 			projectType: "npm",
 			manifestPath: undefined,
 			writeManifest: true,
