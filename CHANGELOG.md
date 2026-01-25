@@ -1,4 +1,13 @@
 # Changelog
+## [3.2.0] - 2026-01-25
+
+### Added
+- Release notes now include dedicated sections for non-developers and for developers upgrading a package.
+
+### Changed
+- Release notes with breaking changes must now include an upgrade guide for developers.
+- Release notes output now uses a consistent, canonical ordering that includes the new audience-focused sections.
+- Improved automated checks to reject invalid release notes that include breaking changes without an upgrade guide.
 ## [3.1.1] - 2026-01-13
 
 ### Changed
