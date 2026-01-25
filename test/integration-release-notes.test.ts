@@ -65,4 +65,53 @@ describe("Integration: release notes generation (network-free)", () => {
 		expect(res.releaseNotes.evidenceNodeIds).toEqual([])
 		expect(res.markdown).toBe("## Unreleased\n")
 	})
+
+	test("rejects Breaking Changes without Upgrade Guide (Developers)", async () => {
+		const { dir } = await makeTempGitRepo()
+		await commitChange(dir, "src/public/newApi.ts", "export const foo = 1\n", "add public api")
+		const base = (await runGitOrThrow(["rev-parse", "HEAD~1"], { cwd: dir })).trim()
+
+		const stub: LLMClient = {
+			async pass1Mechanical() {
+				return { notes: [] }
+			},
+			async pass2Semantic() {
+				return { notes: [] }
+			},
+			async pass3Editorial(input) {
+				const firstEvidenceId = Object.keys(input.evidence).sort()[0]
+				if (!firstEvidenceId) throw new Error("no evidence")
+				return {
+					breakingChanges: [],
+					added: [{ text: "Added foo", evidenceNodeIds: [firstEvidenceId] }],
+					changed: [],
+					fixed: [],
+					removed: [],
+					internalTooling: [],
+					evidence: {}
+				}
+			},
+			async pass3ReleaseNotes(input) {
+				const firstEvidenceId = Object.keys(input.evidence).sort()[0]
+				if (!firstEvidenceId) throw new Error("no evidence")
+				return {
+					markdown: [
+						"This release includes breaking changes.",
+						"",
+						"### Breaking Changes",
+						"- **Action required:** Update your integration.",
+						""
+					].join("\n"),
+					evidenceNodeIds: [firstEvidenceId]
+				}
+			},
+			async pass3VersionBump(input) {
+				return { nextVersion: input.nextVersion, justification: "ok" }
+			}
+		}
+
+		await expect(runReleaseNotesPipeline({ base, cwd: dir, llmClient: stub })).rejects.toThrow(
+			/Breaking Changes.*Upgrade Guide \(Developers\)/
+		)
+	}, 60_000)
 })

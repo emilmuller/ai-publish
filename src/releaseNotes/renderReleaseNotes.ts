@@ -67,14 +67,25 @@ function stripLeadingTopHeadings(body: string): string {
 
 const allowedSectionTitles = new Set([
 	"Highlights",
+	"For Non-Developers",
 	"Breaking Changes",
+	"Upgrade Guide (Developers)",
 	"Fixes",
 	"Deprecations",
 	"Security",
 	"Performance"
 ])
 
-const canonicalSectionOrder = ["Highlights", "Breaking Changes", "Fixes", "Deprecations", "Security", "Performance"]
+const canonicalSectionOrder = [
+	"Highlights",
+	"For Non-Developers",
+	"Breaking Changes",
+	"Upgrade Guide (Developers)",
+	"Fixes",
+	"Deprecations",
+	"Security",
+	"Performance"
+]
 
 function canonicalizeSections(body: string): string {
 	const lines = body.replace(/\r\n/g, "\n").split("\n")

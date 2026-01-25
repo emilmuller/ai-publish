@@ -6,6 +6,10 @@ describe("release notes determinism", () => {
 		const bodyA = [
 			"This release improves stability.",
 			"",
+			"### Upgrade Guide (Developers)",
+			"- Step 2.",
+			"- Step 1.",
+			"",
 			"### Fixes",
 			"- Fixed z.",
 			"- Fixed a.",
@@ -13,6 +17,13 @@ describe("release notes determinism", () => {
 			"### Highlights",
 			"- Added b.",
 			"- Added a.",
+			"",
+			"### For Non-Developers",
+			"- Clear explanation b.",
+			"- Clear explanation a.",
+			"",
+			"### Breaking Changes",
+			"- **Action required:** do x.",
 			"",
 			"### Security",
 			"- Hardened c.",
@@ -28,11 +39,21 @@ describe("release notes determinism", () => {
 		const bodyB = [
 			"This release improves stability.",
 			"",
+			"### Random Section",
+			"- Should be dropped.",
+			"",
+			"### Breaking Changes",
+			"- **Action required:** do x.",
+			"",
 			"### Performance",
 			"- Faster d.",
 			"",
 			"### Security",
 			"- Hardened c.",
+			"",
+			"### For Non-Developers",
+			"- Clear explanation a.",
+			"- Clear explanation b.",
 			"",
 			"### Highlights",
 			"- Added a.",
@@ -41,6 +62,10 @@ describe("release notes determinism", () => {
 			"### Fixes",
 			"- Fixed a.",
 			"- Fixed z.",
+			"",
+			"### Upgrade Guide (Developers)",
+			"- Step 1.",
+			"- Step 2.",
 			""
 		].join("\n")
 
@@ -50,5 +75,8 @@ describe("release notes determinism", () => {
 		expect(a.markdown).toBe(b.markdown)
 		// Sanity: canonical section order begins with Highlights when present.
 		expect(a.markdown).toContain("### Highlights")
+		expect(a.markdown).toContain("### For Non-Developers")
+		expect(a.markdown).toContain("### Upgrade Guide (Developers)")
+		expect(a.markdown).not.toContain("### Random Section")
 	})
 })

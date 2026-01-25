@@ -28,6 +28,13 @@ function debugLog(...args: unknown[]) {
 	console.error("[ai-publish][debug]", ...args)
 }
 
+function releaseNotesHasSection(markdown: string, title: string): boolean {
+	const normalized = (markdown ?? "").replace(/\r\n/g, "\n")
+	const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+	const re = new RegExp(`^\\s*###\\s+${escaped}\\s*$`, "m")
+	return re.test(normalized)
+}
+
 export async function runReleaseNotesPipeline(params: {
 	base: string
 	/** Optional label for rendering output (does not affect diff authority). */
@@ -355,6 +362,15 @@ export async function runReleaseNotesPipeline(params: {
 		throw new Error(
 			"Release notes output contained markdown but no valid evidenceNodeIds. Refusing to attach all evidence implicitly; re-run with a better LLM output."
 		)
+	}
+	if (body) {
+		const hasBreaking = releaseNotesHasSection(body, "Breaking Changes")
+		const hasUpgrade = releaseNotesHasSection(body, "Upgrade Guide (Developers)")
+		if (hasBreaking && !hasUpgrade) {
+			throw new Error(
+				"Release notes output contained a 'Breaking Changes' section but no 'Upgrade Guide (Developers)' section. Re-run with a better LLM output."
+			)
+		}
 	}
 	// Empty markdown is allowed (no user-facing change to report).
 	const finalEvidenceNodeIds = evidenceNodeIds.length ? evidenceNodeIds : []
