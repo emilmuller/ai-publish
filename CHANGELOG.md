@@ -1,4 +1,15 @@
 # Changelog
+## [3.3.0] - 2026-02-04
+
+### Added
+- You can now set repo-wide default classification rules for how changes are categorized, with per-file overrides still taking precedence.
+
+### Changed
+- Changelog and release-notes generation can now be configured with default classification rules without requiring instruction files.
+- For .NET projects, the prepublish step now treats changes under the project directory as public by default, improving version bump and release output accuracy.
+
+### Fixed
+- Test changes are now detected more reliably when test folders use “.test” or “.tests” naming.
 ## [3.2.0] - 2026-01-25
 
 ### Added
