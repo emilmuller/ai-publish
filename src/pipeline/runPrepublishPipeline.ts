@@ -146,10 +146,10 @@ export async function runPrepublishPipeline(params: {
 	const defaultClassifyOverrides: ClassifyOverrides | undefined =
 		manifestType === "dotnet"
 			? (() => {
-				const dir = toGitPath(dirname(relManifestPath))
-				if (!dir || dir === ".") return undefined
-				return { publicPathPrefixes: [dir] }
-			})()
+					const dir = toGitPath(dirname(relManifestPath))
+					if (!dir || dir === ".") return undefined
+					return { publicPathPrefixes: [dir] }
+				})()
 			: undefined
 
 	// Generate changelog first (authority is base..pre-release HEAD). We'll patch the header to the predicted tag later.

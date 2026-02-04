@@ -102,7 +102,7 @@ describe("prepublish pipeline", () => {
 			dir,
 			"MyLib/MyLib.csproj",
 			[
-				"<Project Sdk=\"Microsoft.NET.Sdk\">",
+				'<Project Sdk="Microsoft.NET.Sdk">',
 				"  <PropertyGroup>",
 				"    <TargetFramework>net8.0</TargetFramework>",
 				"    <Version>1.0.0</Version>",
@@ -112,13 +112,23 @@ describe("prepublish pipeline", () => {
 			].join("\n"),
 			"add csproj"
 		)
-		await commitChange(dir, "MyLib/Foo.cs", "namespace MyLib; public static class Foo { public static int X = 0; }\n", "seed code")
+		await commitChange(
+			dir,
+			"MyLib/Foo.cs",
+			"namespace MyLib; public static class Foo { public static int X = 0; }\n",
+			"seed code"
+		)
 
 		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
 		await runGitOrThrow(["tag", "v1.0.0", tagCommit], { cwd: dir })
 
 		// User-visible code fix after the tag.
-		await commitChange(dir, "MyLib/Foo.cs", "namespace MyLib; public static class Foo { public static int X = 1; }\n", "fix bug")
+		await commitChange(
+			dir,
+			"MyLib/Foo.cs",
+			"namespace MyLib; public static class Foo { public static int X = 1; }\n",
+			"fix bug"
+		)
 
 		const res = await runPrepublishPipeline({
 			cwd: dir,
