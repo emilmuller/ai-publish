@@ -18,6 +18,7 @@ import {
 import { assertCleanWorktree, tagExists } from "../git/release"
 import { buildReleaseTagMessage } from "../changelog/tagSummary"
 import { extractFirstKeepAChangelogEntry, prependKeepAChangelogEntry } from "../changelog/prepend"
+import type { ClassifyOverrides } from "../classify/classifyFile"
 
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
@@ -140,6 +141,17 @@ export async function runPrepublishPipeline(params: {
 	const base = resolvedBase.base
 	const baseLabel = resolvedBase.previousTag ?? resolvedBase.base
 
+	// Repo layout hint: for dotnet, treat the manifest project directory as public surface by default.
+	// This avoids requiring instruction files for common layouts like "MyLib/MyLib.csproj".
+	const defaultClassifyOverrides: ClassifyOverrides | undefined =
+		manifestType === "dotnet"
+			? (() => {
+				const dir = toGitPath(dirname(relManifestPath))
+				if (!dir || dir === ".") return undefined
+				return { publicPathPrefixes: [dir] }
+			})()
+			: undefined
+
 	// Generate changelog first (authority is base..pre-release HEAD). We'll patch the header to the predicted tag later.
 	const changelogGenerated = await runChangelogPipeline({
 		base,
@@ -147,7 +159,8 @@ export async function runPrepublishPipeline(params: {
 		headLabel: "HEAD",
 		cwd,
 		indexRootDir: params.indexRootDir,
-		llmClient: params.llmClient
+		llmClient: params.llmClient,
+		defaultClassifyOverrides
 	})
 	debugLog("prepublishPipeline:changelogModel", {
 		breaking: changelogGenerated.model.breakingChanges.length,
@@ -221,7 +234,8 @@ export async function runPrepublishPipeline(params: {
 		headLabel: predictedTag,
 		cwd,
 		indexRootDir: params.indexRootDir,
-		llmClient: params.llmClient
+		llmClient: params.llmClient,
+		defaultClassifyOverrides
 	})
 	debugLog("prepublishPipeline:releaseNotesBytes", releaseNotesGenerated.markdown.length)
 

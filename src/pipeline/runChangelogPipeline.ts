@@ -8,6 +8,7 @@ import { buildEvidenceFromManifest } from "../changelog/evidence"
 import { validateChangelogModel } from "../changelog/validate"
 import { compareStrings } from "../util/compare"
 import { buildDeterministicMechanicalFacts } from "../llm/deterministicFacts"
+import type { ClassifyOverrides } from "../classify/classifyFile"
 import { getRepoFileSnippets } from "../repo/getRepoFileSnippets"
 import { getRepoSnippetAround } from "../repo/getRepoSnippetAround"
 import { getRepoFileMeta } from "../repo/getRepoFileMeta"
@@ -44,6 +45,8 @@ export async function runChangelogPipeline(params: {
 	cwd?: string
 	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
 	indexRootDir?: string
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 	llmClient: LLMClient
 	/**
 	 * Optional bounded git commit message context (untrusted, non-authoritative).
@@ -87,7 +90,10 @@ export async function runChangelogPipeline(params: {
 	const instructionsByPath = Object.fromEntries(resolvedInstructions.map((r) => [r.targetPath, r]))
 
 	const diffIndexManifest = indexRes.manifest as DiffIndexManifest
-	const evidence = buildEvidenceFromManifest(diffIndexManifest, { instructionsByPath })
+	const evidence = buildEvidenceFromManifest(diffIndexManifest, {
+		instructionsByPath,
+		defaultClassifyOverrides: params.defaultClassifyOverrides
+	})
 	const deterministicFacts = buildDeterministicMechanicalFacts({ diffSummary, evidence })
 
 	const commitContext =

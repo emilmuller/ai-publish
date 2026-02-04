@@ -20,6 +20,8 @@ export function classifyFile(path: string, overrides?: ClassifyOverrides): Surfa
 	if (
 		hasAnyPrefix(lower, ["test", "tests", "__tests__"]) ||
 		lower.includes("/__tests__/") ||
+		lower.includes(".tests/") ||
+		lower.includes(".test/") ||
 		lower.endsWith(".test.ts") ||
 		lower.endsWith(".spec.ts")
 	) {

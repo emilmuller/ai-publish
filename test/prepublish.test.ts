@@ -93,4 +93,44 @@ describe("prepublish pipeline", () => {
 		const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as any
 		expect(pkg.version).toBe("1.2.4")
 	})
+
+	test("dotnet: infers public surface from csproj directory", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		// Establish a previous version tag commit with a csproj in a conventional project directory.
+		await commitChange(
+			dir,
+			"MyLib/MyLib.csproj",
+			[
+				"<Project Sdk=\"Microsoft.NET.Sdk\">",
+				"  <PropertyGroup>",
+				"    <TargetFramework>net8.0</TargetFramework>",
+				"    <Version>1.0.0</Version>",
+				"  </PropertyGroup>",
+				"</Project>",
+				""
+			].join("\n"),
+			"add csproj"
+		)
+		await commitChange(dir, "MyLib/Foo.cs", "namespace MyLib; public static class Foo { public static int X = 0; }\n", "seed code")
+
+		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.0.0", tagCommit], { cwd: dir })
+
+		// User-visible code fix after the tag.
+		await commitChange(dir, "MyLib/Foo.cs", "namespace MyLib; public static class Foo { public static int X = 1; }\n", "fix bug")
+
+		const res = await runPrepublishPipeline({
+			cwd: dir,
+			llmClient: makeDeterministicTestLLMClient(),
+			manifest: { type: "dotnet", path: "MyLib/MyLib.csproj", write: true }
+		})
+
+		expect(res.previousVersion).toBe("1.0.0")
+		expect(res.bumpType).toBe("patch")
+		expect(res.predictedTag).toBe("v1.0.1")
+
+		const updated = await readFile(join(dir, "MyLib", "MyLib.csproj"), "utf8")
+		expect(updated).toContain("<Version>1.0.1</Version>")
+	}, 60_000)
 })

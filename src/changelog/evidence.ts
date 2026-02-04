@@ -7,10 +7,40 @@ import { sha256Hex } from "../util/sha256"
 
 export function buildEvidenceFromManifest(
 	manifest: DiffIndexManifest,
-	options?: { instructionsByPath?: Record<string, ResolvedInstructions> }
+	options?: {
+		instructionsByPath?: Record<string, ResolvedInstructions>
+		defaultClassifyOverrides?: ClassifyOverrides
+	}
 ): Record<string, EvidenceNode> {
 	const evidence: Record<string, EvidenceNode> = {}
 	const byPath = options?.instructionsByPath
+	const defaultOverrides = options?.defaultClassifyOverrides
+
+	function mergeOverrides(
+		a: ClassifyOverrides | undefined,
+		b: ClassifyOverrides | undefined
+	): ClassifyOverrides | undefined {
+		if (!a && !b) return undefined
+		const out: ClassifyOverrides = {}
+
+		function mergeList(key: keyof ClassifyOverrides) {
+			const aa = (a?.[key] ?? []) as string[]
+			const bb = (b?.[key] ?? []) as string[]
+			const merged: string[] = []
+			const seen = new Set<string>()
+			for (const v of [...aa, ...bb]) {
+				if (seen.has(v)) continue
+				seen.add(v)
+				merged.push(v)
+			}
+			if (merged.length) (out as any)[key] = merged
+		}
+
+		mergeList("publicPathPrefixes")
+		mergeList("publicFilePaths")
+		mergeList("internalPathPrefixes")
+		return Object.keys(out).length ? out : undefined
+	}
 
 	function getOverridesForPath(path: string): ClassifyOverrides | undefined {
 		if (!byPath) return undefined
@@ -42,7 +72,7 @@ export function buildEvidenceFromManifest(
 	// Deterministic evidence node IDs: fixed-length hash of stable metadata.
 	// This avoids enormous IDs for files with many hunks, while keeping full evidence in the node.
 	for (const f of manifest.files) {
-		const overrides = getOverridesForPath(f.path)
+		const overrides = mergeOverrides(defaultOverrides, getOverridesForPath(f.path))
 		const surface = classifyFile(f.path, overrides)
 		const sortedHunkIds = [...f.hunkIds].sort()
 		const stableKey = JSON.stringify({

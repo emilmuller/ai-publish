@@ -17,6 +17,7 @@ import { resolveHeadVersionTagFromGitTags } from "../version/resolveVersionBase"
 import { getCommitContext } from "../git/getCommitContext"
 import { logDebug, logInfo, traceToolsEnabled } from "../util/logger"
 import type { RepoFileSnippet, RepoSnippetAroundResult } from "../repo/types"
+import type { ClassifyOverrides } from "../classify/classifyFile"
 
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
@@ -44,6 +45,8 @@ export async function runReleaseNotesPipeline(params: {
 	cwd?: string
 	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
 	indexRootDir?: string
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 	llmClient: LLMClient
 	/**
 	 * Optional bounded git commit message context (untrusted, non-authoritative).
@@ -74,7 +77,10 @@ export async function runReleaseNotesPipeline(params: {
 	const instructionsByPath = Object.fromEntries(resolvedInstructions.map((r) => [r.targetPath, r]))
 
 	const diffIndexManifest = indexRes.manifest as DiffIndexManifest
-	const evidence = buildEvidenceFromManifest(diffIndexManifest, { instructionsByPath })
+	const evidence = buildEvidenceFromManifest(diffIndexManifest, {
+		instructionsByPath,
+		defaultClassifyOverrides: params.defaultClassifyOverrides
+	})
 	const deterministicFacts = buildDeterministicMechanicalFacts({ diffSummary, evidence })
 
 	const commitContext =
