@@ -1,4 +1,10 @@
 # Changelog
+## [4.0.0] - 2026-02-05
+
+### Changed
+- **BREAKING:** Breaking: removed exports from src/index.ts
+- Updated README.md.
+- Performance and stability improvements.
 ## [3.3.0] - 2026-02-04
 
 ### Added
