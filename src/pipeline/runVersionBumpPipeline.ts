@@ -14,6 +14,7 @@ import {
 	updateNpmPackageJsonVersion,
 	updatePyProjectTomlVersion
 } from "../version/manifests"
+import type { ClassifyOverrides } from "../classify/classifyFile"
 
 export async function runVersionBumpPipeline(params: {
 	cwd?: string
@@ -31,6 +32,8 @@ export async function runVersionBumpPipeline(params: {
 	packageJsonPath?: string
 	/** Which project manifest to update. Defaults to `{ type: "npm", path: "package.json", write: true }`. */
 	manifest?: ManifestTarget
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 }): Promise<{
 	previousVersion: string
 	previousTag: string | null
@@ -82,7 +85,8 @@ export async function runVersionBumpPipeline(params: {
 		base: resolvedBase.base,
 		cwd,
 		indexRootDir: params.indexRootDir,
-		llmClient: params.llmClient
+		llmClient: params.llmClient,
+		defaultClassifyOverrides: params.defaultClassifyOverrides
 	})
 	const bumpType = computeBumpTypeFromChangelogModel(changelog.model)
 	const nextVersion = computeNextVersion({ previousVersion, bumpType })

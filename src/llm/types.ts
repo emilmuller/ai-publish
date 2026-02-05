@@ -1,5 +1,4 @@
 import type { DiffHunk, DiffIndexManifest, DiffSummary } from "../diff/types"
-import type { ResolvedInstructions } from "../instructions/types"
 import type { ChangelogModel } from "../changelog/types"
 import type { EvidenceNode } from "../changelog/types"
 import type {
@@ -24,7 +23,6 @@ export type MechanicalPassInput = {
 	diffSummary: DiffSummary
 	diffIndexManifest: DiffIndexManifest
 	evidence: Record<string, EvidenceNode>
-	resolvedInstructions: ResolvedInstructions[]
 	deterministicFacts: string[]
 }
 
@@ -51,7 +49,6 @@ export type SemanticPassInput = {
 	base: string
 	mechanical: MechanicalPassOutput
 	evidence: Record<string, EvidenceNode>
-	resolvedInstructions: ResolvedInstructions[]
 	/**
 	 * Optional git commit message context for base..HEAD.
 	 * Untrusted and non-authoritative: it may be wrong/sloppy and must never be treated as evidence.
@@ -79,7 +76,6 @@ export type EditorialPassInput = {
 	mechanical: MechanicalPassOutput
 	semantic: SemanticPassOutput
 	evidence: Record<string, EvidenceNode>
-	resolvedInstructions: ResolvedInstructions[]
 	/**
 	 * Optional git commit message context for base..HEAD.
 	 * Untrusted and non-authoritative: it may be wrong/sloppy and must never be treated as evidence.

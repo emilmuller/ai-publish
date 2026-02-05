@@ -190,7 +190,6 @@ Both `changelog` and `release-notes` follow the same three-pass structure:
     The model is given only deterministic, metadata-only inputs:
     - the diff summary (file list, change types, basic stats)
     - evidence nodes (file-level nodes with hunk IDs)
-    - resolved repo instructions (context-only configuration)
     - deterministic “mechanical facts” (counts + a per-file index, still no patch text)
 
     It outputs a list of “mechanical notes” — a compact intermediate representation of what changed.
@@ -260,9 +259,9 @@ LLM mode is required for `changelog`, `release-notes`, and `prepublish`: you mus
 LLM providers are mentioned below; OpenAI is listed first.
 
 ```text
-ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
-ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
-ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <openai|azure> [--debug]
+ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
+ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <openai|azure> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]
+ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <openai|azure> [--debug]
 ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--publish-command <cmd>] [--skip-publish] [--debug]
 ai-publish --help
 ```
@@ -352,27 +351,15 @@ Environment variables:
 - `go`: no publish command (the “publish” is the pushed tag)
 - `python`: runs `python -m build` then `python -m twine upload dist/*`
 
-## Optional repo instructions (improves accuracy)
+## Surface classification overrides
 
-ai-publish can scan the target repo (the repo you are releasing) for hierarchical instruction files and feed them into `changelog`, `release-notes`, and `prepublish` generation as **context-only configuration**.
+Surface classification (what counts as “user-facing” vs “internal-only”) can be overridden explicitly via CLI flags:
 
-Supported instruction filenames:
+- `--public-path-prefix <path>` (repeatable)
+- `--public-file-path <path>` (repeatable)
+- `--internal-path-prefix <path>` (repeatable)
 
-- `AGENTS.md`
-- `copilot-instructions.md`
-- `.github/copilot-instructions.md`
-
-Resolution is hierarchical (repo root → directories containing changed files); when multiple instruction files define the same directive key, the nearest file wins.
-
-One practical use: helping ai-publish identify what constitutes public API in repos that don’t follow the default heuristics (monorepos, unusual layouts, non-TypeScript projects).
-
-Add one of these directives to an instruction file:
-
-- `ai-publish.publicPathPrefixes: src/public, include, api`
-- `ai-publish.publicFilePaths: src/entrypoint.ts`
-- `ai-publish.internalPathPrefixes: generated, vendor`
-
-These directives influence surface classification (`public-api` vs `internal`) and therefore breaking-change heuristics and prioritization, but they do not change the core invariant: only `git diff <base>..HEAD` is evidence of what changed.
+Programmatic consumers can pass the equivalent `defaultClassifyOverrides`.
 
 ## Programmatic usage (TS/JS)
 

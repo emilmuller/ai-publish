@@ -1,6 +1,5 @@
 import { indexDiff } from "../diff"
 import { fetchHunksWithBudget } from "./hunkBudget"
-import { getResolvedInstructions } from "../instructions/resolveInstructions"
 import type { LLMClient } from "../llm/types"
 import type { ChangelogModel } from "../changelog/types"
 import type { DiffIndexManifest } from "../diff/types"
@@ -86,12 +85,9 @@ export async function runChangelogPipeline(params: {
 	// LLM mode (scaffold): follow the 3-pass contract and tool-gating.
 	// Reuse the indexed diff summary to keep totals consistent and avoid redundant git calls.
 	const diffSummary = indexRes.summary
-	const resolvedInstructions = await getResolvedInstructions({ cwd, paths: diffSummary.files.map((f) => f.path) })
-	const instructionsByPath = Object.fromEntries(resolvedInstructions.map((r) => [r.targetPath, r]))
 
 	const diffIndexManifest = indexRes.manifest as DiffIndexManifest
 	const evidence = buildEvidenceFromManifest(diffIndexManifest, {
-		instructionsByPath,
 		defaultClassifyOverrides: params.defaultClassifyOverrides
 	})
 	const deterministicFacts = buildDeterministicMechanicalFacts({ diffSummary, evidence })
@@ -114,7 +110,6 @@ export async function runChangelogPipeline(params: {
 		diffSummary,
 		diffIndexManifest,
 		evidence,
-		resolvedInstructions,
 		deterministicFacts
 	})
 	debugLog("changelogPipeline:pass1", { notes: mechanical.notes.length })
@@ -143,7 +138,7 @@ export async function runChangelogPipeline(params: {
 	let remainingRepoMetaBytes = DEFAULT_GLOBAL_REPO_META_BUDGET_BYTES
 
 	const semantic = await params.llmClient.pass2Semantic(
-		{ base: params.base, mechanical, evidence, resolvedInstructions, commitContext },
+		{ base: params.base, mechanical, evidence, commitContext },
 		{
 			getDiffHunks: async (hunkIds) => {
 				const trace = traceToolsEnabled()
@@ -358,7 +353,6 @@ export async function runChangelogPipeline(params: {
 		mechanical,
 		semantic,
 		evidence,
-		resolvedInstructions,
 		commitContext
 	})
 	debugLog("changelogPipeline:pass3")

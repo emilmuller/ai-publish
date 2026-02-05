@@ -143,4 +143,39 @@ describe("prepublish pipeline", () => {
 		const updated = await readFile(join(dir, "MyLib", "MyLib.csproj"), "utf8")
 		expect(updated).toContain("<Version>1.0.1</Version>")
 	}, 60_000)
+
+	test("can bump via default classification overrides (no instruction files)", async () => {
+		const { dir } = await makeTempGitRepo()
+
+		await commitChange(
+			dir,
+			"package.json",
+			JSON.stringify({ name: "pkg", version: "1.0.0" }, null, 2) + "\n",
+			"add package"
+		)
+		await commitChange(dir, "lib/foo.ts", "export const foo = 0\n", "seed internal")
+
+		const tagCommit = (await runGitOrThrow(["rev-parse", "HEAD"], { cwd: dir })).trim()
+		await runGitOrThrow(["tag", "v1.0.0", tagCommit], { cwd: dir })
+
+		await commitChange(dir, "lib/foo.ts", "export const foo = 1\n", "change internal")
+
+		await expect(
+			runPrepublishPipeline({
+				cwd: dir,
+				llmClient: makeDeterministicTestLLMClient(),
+				manifest: { type: "npm", path: "package.json", write: true }
+			})
+		).rejects.toThrow(/No user-facing changes detected/i)
+
+		const res = await runPrepublishPipeline({
+			cwd: dir,
+			llmClient: makeDeterministicTestLLMClient(),
+			manifest: { type: "npm", path: "package.json", write: true },
+			defaultClassifyOverrides: { publicPathPrefixes: ["lib"] }
+		})
+
+		expect(res.bumpType).toBe("patch")
+		expect(res.predictedTag).toBe("v1.0.1")
+	})
 })

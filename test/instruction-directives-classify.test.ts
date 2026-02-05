@@ -2,13 +2,12 @@ import { describe, expect, test } from "vitest"
 import { commitChange, makeTempGitRepo } from "./gitFixture"
 import { runGitOrThrow } from "../src/git/runGit"
 import { indexDiff } from "../src/diff"
-import { getResolvedInstructions } from "../src/instructions/resolveInstructions"
 import { buildEvidenceFromManifest } from "../src/changelog/evidence"
 import { readFile } from "node:fs/promises"
 import type { DiffIndexManifest } from "../src/diff/types"
 
 describe("instruction directives", () => {
-	test("ai-publish.publicPathPrefixes can mark internal paths as public-api", async () => {
+	test("AGENTS.md directives are ignored for surface classification", async () => {
 		const { dir } = await makeTempGitRepo()
 
 		// Repo-level instructions.
@@ -26,13 +25,11 @@ describe("instruction directives", () => {
 		await commitChange(dir, "src/internal/thing.ts", "export const x = 2\n", "modify internal file")
 
 		const idx = await indexDiff({ base, cwd: dir })
-		const resolved = await getResolvedInstructions({ cwd: dir, paths: idx.summary.files.map((f) => f.path) })
-		const instructionsByPath = Object.fromEntries(resolved.map((r) => [r.targetPath, r]))
 		const manifest = JSON.parse(await readFile(idx.manifestPath, "utf8")) as DiffIndexManifest
-		const evidence = buildEvidenceFromManifest(manifest, { instructionsByPath })
+		const evidence = buildEvidenceFromManifest(manifest)
 
 		const node = Object.values(evidence).find((e) => e.filePath === "src/internal/thing.ts")
 		expect(node, "Expected evidence node for modified internal file").toBeTruthy()
-		expect(node!.surface).toBe("public-api")
+		expect(node!.surface).toBe("internal")
 	})
 })

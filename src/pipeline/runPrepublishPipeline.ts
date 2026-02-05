@@ -20,6 +20,36 @@ import { buildReleaseTagMessage } from "../changelog/tagSummary"
 import { extractFirstKeepAChangelogEntry, prependKeepAChangelogEntry } from "../changelog/prepend"
 import type { ClassifyOverrides } from "../classify/classifyFile"
 
+function mergeClassifyOverrides(a?: ClassifyOverrides, b?: ClassifyOverrides): ClassifyOverrides | undefined {
+	const publicPathPrefixes = [...(a?.publicPathPrefixes ?? []), ...(b?.publicPathPrefixes ?? [])]
+	const publicFilePaths = [...(a?.publicFilePaths ?? []), ...(b?.publicFilePaths ?? [])]
+	const internalPathPrefixes = [...(a?.internalPathPrefixes ?? []), ...(b?.internalPathPrefixes ?? [])]
+
+	function normalize(v: string): string {
+		return v.replace(/\\/g, "/")
+	}
+
+	function dedupe(xs: string[]): string[] {
+		const seen = new Set<string>()
+		const out: string[] = []
+		for (const x of xs) {
+			const k = normalize(x)
+			if (seen.has(k)) continue
+			seen.add(k)
+			out.push(k)
+		}
+		return out
+	}
+
+	const merged: ClassifyOverrides = {
+		...(publicPathPrefixes.length ? { publicPathPrefixes: dedupe(publicPathPrefixes) } : {}),
+		...(publicFilePaths.length ? { publicFilePaths: dedupe(publicFilePaths) } : {}),
+		...(internalPathPrefixes.length ? { internalPathPrefixes: dedupe(internalPathPrefixes) } : {})
+	}
+
+	return Object.keys(merged).length ? merged : undefined
+}
+
 function debugEnabled(): boolean {
 	return process.env.AI_PUBLISH_DEBUG_CLI === "1"
 }
@@ -76,6 +106,8 @@ export async function runPrepublishPipeline(params: {
 	previousVersion?: string
 	/** Optional override for how previousVersion is inferred when no tags exist. */
 	previousVersionSource?: "manifest" | "manifest-history"
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 }): Promise<{
 	previousVersion: string
 	previousTag: string | null
@@ -143,7 +175,7 @@ export async function runPrepublishPipeline(params: {
 
 	// Repo layout hint: for dotnet, treat the manifest project directory as public surface by default.
 	// This avoids requiring instruction files for common layouts like "MyLib/MyLib.csproj".
-	const defaultClassifyOverrides: ClassifyOverrides | undefined =
+	const dotnetDefaultClassifyOverrides: ClassifyOverrides | undefined =
 		manifestType === "dotnet"
 			? (() => {
 					const dir = toGitPath(dirname(relManifestPath))
@@ -151,6 +183,10 @@ export async function runPrepublishPipeline(params: {
 					return { publicPathPrefixes: [dir] }
 				})()
 			: undefined
+	const defaultClassifyOverrides = mergeClassifyOverrides(
+		dotnetDefaultClassifyOverrides,
+		params.defaultClassifyOverrides
+	)
 
 	// Generate changelog first (authority is base..pre-release HEAD). We'll patch the header to the predicted tag later.
 	const changelogGenerated = await runChangelogPipeline({

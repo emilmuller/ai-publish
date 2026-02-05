@@ -18,6 +18,7 @@ import {
 	resolveVersionBaseFromGitTags
 } from "./version/resolveVersionBase"
 import type { ManifestTarget, ManifestType } from "./version/manifests"
+import type { ClassifyOverrides } from "./classify/classifyFile"
 
 export type CommonGenerateArgs = {
 	/** Git base revision (same as CLI `--base`). If omitted, defaults to previous version tag commit (v<semver>) or empty tree. */
@@ -28,6 +29,8 @@ export type CommonGenerateArgs = {
 	outPath?: string
 	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
 	indexRootDir?: string
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 	/** LLM provider (same as CLI `--llm`). */
 	llm: "azure" | "openai"
 	/** Working directory to run in (defaults to `process.cwd()`). */
@@ -67,6 +70,8 @@ export type PrepublishArgs = {
 	changelogOutPath?: string
 	/** Optional override for diff index root dir (defaults to <cwd>/.ai-publish/diff-index). */
 	indexRootDir?: string
+	/** Optional default surface classification overrides applied to all files (may be further overridden by repo instructions). */
+	defaultClassifyOverrides?: ClassifyOverrides
 	/** LLM provider (same as CLI `--llm`). */
 	llm: "azure" | "openai"
 	/** Working directory to run in (defaults to `process.cwd()`). */
@@ -152,7 +157,8 @@ export async function generateChangelog(args: GenerateChangelogArgs): Promise<Ge
 		headLabel,
 		cwd,
 		indexRootDir: args.indexRootDir,
-		llmClient
+		llmClient,
+		defaultClassifyOverrides: args.defaultClassifyOverrides
 	})
 	const validation = validateChangelogModel(generated.model)
 	if (!validation.ok) {
@@ -210,7 +216,8 @@ export async function generateReleaseNotes(args: CommonGenerateArgs): Promise<Ge
 			llmClient,
 			indexRootDir: args.indexRootDir,
 			previousVersion: args.previousVersion,
-			manifest: { type: "npm", path: "package.json", write: false }
+			manifest: { type: "npm", path: "package.json", write: false },
+			defaultClassifyOverrides: args.defaultClassifyOverrides
 		})
 		const predictedTag = `v${bumped.nextVersion}`
 		headLabel = predictedTag
@@ -222,7 +229,8 @@ export async function generateReleaseNotes(args: CommonGenerateArgs): Promise<Ge
 		headLabel,
 		cwd,
 		indexRootDir: args.indexRootDir,
-		llmClient
+		llmClient,
+		defaultClassifyOverrides: args.defaultClassifyOverrides
 	})
 
 	const absOut = resolve(cwd, outPath)
@@ -254,7 +262,8 @@ export async function prepublish(args: PrepublishArgs): Promise<PrepublishResult
 		previousVersionSource: args.previousVersionSource,
 		packageJsonPath: args.packageJsonPath,
 		manifest: args.manifest,
-		changelogOutPath: args.changelogOutPath
+		changelogOutPath: args.changelogOutPath,
+		defaultClassifyOverrides: args.defaultClassifyOverrides
 	})
 
 	return { ...res, llm: args.llm }

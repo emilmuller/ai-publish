@@ -196,4 +196,40 @@ describe("cli args", () => {
 			llm: "azure"
 		})
 	})
+
+	test("parses surface classification override flags (repeatable)", () => {
+		const parsed = parseCliArgs([
+			"prepublish",
+			"--llm",
+			"azure",
+			"--public-path-prefix",
+			"Veracity.GenAI.AspNetCore",
+			"--public-path-prefix",
+			"Veracity.GenAI.AspNetCore/Sub",
+			"--public-file-path",
+			"src/index.ts",
+			"--internal-path-prefix",
+			"generated",
+			"--internal-path-prefix",
+			"generated" // duplicates are deduped
+		])
+		expect(parsed).toEqual({
+			command: "prepublish",
+			base: undefined,
+			previousVersion: undefined,
+			previousVersionSource: "manifest",
+			projectType: "npm",
+			manifestPath: undefined,
+			writeManifest: true,
+			packageJsonPath: "package.json",
+			changelogOutPath: "CHANGELOG.md",
+			outProvided: false,
+			defaultClassifyOverrides: {
+				publicPathPrefixes: ["Veracity.GenAI.AspNetCore", "Veracity.GenAI.AspNetCore/Sub"],
+				publicFilePaths: ["src/index.ts"],
+				internalPathPrefixes: ["generated"]
+			},
+			llm: "azure"
+		})
+	})
 })

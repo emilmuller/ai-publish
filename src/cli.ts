@@ -17,6 +17,37 @@ import {
 	resolveVersionBaseBeforeHeadTagFromGitTags,
 	resolveVersionBaseFromGitTags
 } from "./version/resolveVersionBase"
+import type { ClassifyOverrides } from "./classify/classifyFile"
+
+function normalizePathLike(v: string): string {
+	return v.replace(/\\/g, "/")
+}
+
+function mergeClassifyOverrides(a?: ClassifyOverrides, b?: ClassifyOverrides): ClassifyOverrides | undefined {
+	const publicPathPrefixes = [...(a?.publicPathPrefixes ?? []), ...(b?.publicPathPrefixes ?? [])]
+	const publicFilePaths = [...(a?.publicFilePaths ?? []), ...(b?.publicFilePaths ?? [])]
+	const internalPathPrefixes = [...(a?.internalPathPrefixes ?? []), ...(b?.internalPathPrefixes ?? [])]
+
+	function dedupe(xs: string[]): string[] {
+		const seen = new Set<string>()
+		const out: string[] = []
+		for (const x of xs) {
+			const k = normalizePathLike(x)
+			if (seen.has(k)) continue
+			seen.add(k)
+			out.push(k)
+		}
+		return out
+	}
+
+	const merged: ClassifyOverrides = {
+		...(publicPathPrefixes.length ? { publicPathPrefixes: dedupe(publicPathPrefixes) } : {}),
+		...(publicFilePaths.length ? { publicFilePaths: dedupe(publicFilePaths) } : {}),
+		...(internalPathPrefixes.length ? { internalPathPrefixes: dedupe(internalPathPrefixes) } : {})
+	}
+
+	return Object.keys(merged).length ? merged : undefined
+}
 
 async function tryResolveCommitSha(cwd: string, rev: string): Promise<string | null> {
 	try {
@@ -65,6 +96,7 @@ type ParsedArgs =
 			outPath: string
 			outProvided: boolean
 			indexRootDir?: string
+			defaultClassifyOverrides?: ClassifyOverrides
 			commitContext?: {
 				mode: "none" | "snippet" | "full"
 				maxCommits?: number
@@ -79,6 +111,7 @@ type ParsedArgs =
 			outPath: string
 			outProvided: boolean
 			indexRootDir?: string
+			defaultClassifyOverrides?: ClassifyOverrides
 			commitContext?: {
 				mode: "none" | "snippet" | "full"
 				maxCommits?: number
@@ -98,6 +131,7 @@ type ParsedArgs =
 			changelogOutPath: string
 			outProvided: boolean
 			indexRootDir?: string
+			defaultClassifyOverrides?: ClassifyOverrides
 			llm: "azure" | "openai"
 	  }
 	| {
@@ -112,9 +146,9 @@ type ParsedArgs =
 export function formatUsage(): string {
 	return [
 		"Usage:",
-		"  ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
-		"  ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
-		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] --llm <azure|openai> [--debug]",
+		"  ai-publish changelog [--base <commit>] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish release-notes [--base <commit>] [--previous-version <semver>] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <azure|openai> [--commit-context <none|snippet|full>] [--commit-context-bytes <n>] [--commit-context-commits <n>] [--debug]",
+		"  ai-publish prepublish [--base <commit>] [--previous-version <semver>] [--previous-version-from-manifest-history] [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--package <path>] [--no-write] [--out <path>] [--index-root-dir <path>] [--public-path-prefix <path>] [--public-file-path <path>] [--internal-path-prefix <path>] --llm <azure|openai> [--debug]",
 		"  ai-publish postpublish [--project-type <npm|dotnet|rust|python|go>] [--manifest <path>] [--publish-command <cmd>] [--skip-publish] [--debug]",
 		"  ai-publish --help",
 		"",
@@ -128,6 +162,10 @@ export function formatUsage(): string {
 		"    - Default: --commit-context snippet --commit-context-bytes 65536 --commit-context-commits 200",
 		"    - Disable: --commit-context none",
 		"  - --package is a backwards-compatible alias for npm manifests (prepublish only); it implies --project-type npm.",
+		"  - Surface classification overrides for non-standard repo layouts:",
+		"    - --public-path-prefix <path> (repeatable)",
+		"    - --public-file-path <path> (repeatable)",
+		"    - --internal-path-prefix <path> (repeatable)",
 		"  - Unknown flags are rejected."
 	].join("\n")
 }
@@ -205,8 +243,12 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	let indexRootDir: string | undefined
 	let publishCommand: string | undefined
 	let skipPublish = false
+	let publicPathPrefixes: string[] = []
+	let publicFilePaths: string[] = []
+	let internalPathPrefixes: string[] = []
 
 	const seenFlags = new Set<string>()
+	const repeatableFlags = new Set<string>(["--public-path-prefix", "--public-file-path", "--internal-path-prefix"])
 
 	for (let i = 1; i < args.length; i++) {
 		const token = args[i]!
@@ -218,10 +260,12 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 		// Debug is handled by main() (env + stderr logging). Parse accepts it so it's not rejected.
 		if (token === "--debug") continue
 
-		if (seenFlags.has(token)) {
-			throw new Error(`Duplicate flag: ${token}`)
+		if (!repeatableFlags.has(token)) {
+			if (seenFlags.has(token)) {
+				throw new Error(`Duplicate flag: ${token}`)
+			}
+			seenFlags.add(token)
 		}
-		seenFlags.add(token)
 
 		switch (token) {
 			case "--base": {
@@ -352,10 +396,40 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 				skipPublish = true
 				break
 			}
+			case "--public-path-prefix": {
+				if (command === "postpublish") {
+					throw new Error("--public-path-prefix is not supported for postpublish")
+				}
+				publicPathPrefixes.push(normalizePathLike(takeValue(args, i, token)))
+				i += 1
+				break
+			}
+			case "--public-file-path": {
+				if (command === "postpublish") {
+					throw new Error("--public-file-path is not supported for postpublish")
+				}
+				publicFilePaths.push(normalizePathLike(takeValue(args, i, token)))
+				i += 1
+				break
+			}
+			case "--internal-path-prefix": {
+				if (command === "postpublish") {
+					throw new Error("--internal-path-prefix is not supported for postpublish")
+				}
+				internalPathPrefixes.push(normalizePathLike(takeValue(args, i, token)))
+				i += 1
+				break
+			}
 			default:
 				throw new Error(`Unknown flag: ${token}`)
 		}
 	}
+
+	const defaultClassifyOverrides = mergeClassifyOverrides(undefined, {
+		...(publicPathPrefixes.length ? { publicPathPrefixes } : {}),
+		...(publicFilePaths.length ? { publicFilePaths } : {}),
+		...(internalPathPrefixes.length ? { internalPathPrefixes } : {})
+	})
 
 	if (command !== "postpublish" && !llm) throw new Error("Missing required flag: --llm")
 
@@ -387,6 +461,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			outPath,
 			outProvided,
 			commitContext,
+			...(defaultClassifyOverrides ? { defaultClassifyOverrides } : {}),
 			llm: llm!,
 			...(indexRootDir ? { indexRootDir } : {})
 		}
@@ -399,6 +474,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			outPath,
 			outProvided,
 			commitContext,
+			...(defaultClassifyOverrides ? { defaultClassifyOverrides } : {}),
 			llm: llm!,
 			...(indexRootDir ? { indexRootDir } : {})
 		}
@@ -415,6 +491,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 			packageJsonPath,
 			changelogOutPath: outPath,
 			outProvided,
+			...(defaultClassifyOverrides ? { defaultClassifyOverrides } : {}),
 			llm: llm!,
 			...(indexRootDir ? { indexRootDir } : {})
 		}
@@ -497,7 +574,8 @@ async function main() {
 			headLabel,
 			llmClient: llmClient!,
 			indexRootDir: parsed.indexRootDir,
-			commitContext: parsed.commitContext
+			commitContext: parsed.commitContext,
+			defaultClassifyOverrides: parsed.defaultClassifyOverrides
 		})
 		// (llmClient is required for changelog)
 		const validation = validateChangelogModel(generated.model)
@@ -542,7 +620,8 @@ async function main() {
 					llmClient: llmClient!,
 					indexRootDir: parsed.indexRootDir,
 					previousVersion: parsed.previousVersion,
-					manifest: { type: "npm", path: "package.json", write: false }
+					manifest: { type: "npm", path: "package.json", write: false },
+					defaultClassifyOverrides: parsed.defaultClassifyOverrides
 				})
 				const predictedTag = `v${bumped.nextVersion}`
 
@@ -569,7 +648,8 @@ async function main() {
 			headLabel,
 			llmClient: llmClient!,
 			indexRootDir: parsed.indexRootDir,
-			commitContext: parsed.commitContext
+			commitContext: parsed.commitContext,
+			defaultClassifyOverrides: parsed.defaultClassifyOverrides
 		})
 		markdown = generated.markdown
 	} else if (parsed.command === "prepublish") {
@@ -581,6 +661,7 @@ async function main() {
 			previousVersion: parsed.previousVersion,
 			previousVersionSource: parsed.previousVersionSource,
 			packageJsonPath: parsed.packageJsonPath,
+			defaultClassifyOverrides: parsed.defaultClassifyOverrides,
 			manifest: {
 				type: parsed.projectType,
 				path: parsed.manifestPath,

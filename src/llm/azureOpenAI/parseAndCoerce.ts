@@ -8,7 +8,6 @@ import type {
 	RepoSnippetAroundRequest,
 	RepoFileMetaRequest
 } from "../../repo/types"
-import type { ResolvedInstructions } from "../../instructions/types"
 
 function asRecord(v: unknown): Record<string, unknown> | null {
 	if (!v || typeof v !== "object" || Array.isArray(v)) return null
@@ -164,18 +163,6 @@ export function renderEvidenceIndexRedactedForReleaseNotes(evidence: Record<stri
 				.filter(Boolean)
 				.join(" | ")
 		)
-	}
-	return lines.join("\n")
-}
-
-export function summarizeInstructions(resolved: ResolvedInstructions[]): string {
-	if (!resolved.length) return "(none)"
-	const lines: string[] = []
-	for (const r of resolved) {
-		lines.push(`- target: ${r.targetPath}`)
-		for (const w of r.warnings) lines.push(`  - warning: ${w}`)
-		for (const f of r.agents) lines.push(`  - agents: ${f.path}`)
-		for (const f of r.copilot) lines.push(`  - copilot: ${f.path}`)
 	}
 	return lines.join("\n")
 }
