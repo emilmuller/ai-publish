@@ -1,4 +1,11 @@
 # Changelog
+## [4.1.1] - 2026-04-15
+
+### Changed
+- Improved the semantic-pass prompt to produce shorter, intermediate notes and to avoid including citations or other metadata in the output.
+- Semantic notes are now cleaned up before being returned (strips citation-like text, removes duplicates, and limits the list size).
+- Applied the same semantic-note cleanup behavior across both supported LLM providers for consistent results.
+- Performance and stability improvements.
 ## [4.1.0] - 2026-04-15
 
 ### Changed
