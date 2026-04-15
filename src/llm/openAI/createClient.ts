@@ -42,6 +42,7 @@ import {
 	parseJsonObject,
 	renderMechanicalEvidenceSummary,
 	sanitizeMechanicalPassNotes,
+	sanitizeSemanticPassNotes,
 	renderEvidenceIndex,
 	renderEvidenceIndexWithRefs,
 	renderEvidenceIndexRedactedForReleaseNotes,
@@ -696,7 +697,12 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 					"",
 					"Guidance:",
 					"- Notes must be grounded in the hunks you saw.",
-					"- If you cannot support a note with the provided hunks, omit it."
+					"- If you cannot support a note with the provided hunks, omit it.",
+					"- These are intermediate notes for a later editorial pass, not final release text.",
+					"- Keep notes terse and high-signal.",
+					"- Prefer at most 8 notes total, usually one sentence each.",
+					"- Do NOT include evidence IDs, hunk IDs, hashes, file paths, raw diff lines, or copied metadata tables in notes.",
+					"- Do NOT append citations or parenthetical evidence lists."
 				].join("\n")
 			})
 
@@ -706,7 +712,7 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 				jsonSchemaResponseFormat("semantic_notes", schemaNotesOutput),
 				{ maxTokens: 1400 }
 			)
-			return { notes: assertStringArray("Semantic pass notes", out.notes) }
+			return { notes: sanitizeSemanticPassNotes(assertStringArray("Semantic pass notes", out.notes)) }
 		},
 
 		async pass3Editorial(input: EditorialPassInput): Promise<ChangelogModel> {

@@ -9,7 +9,7 @@ vi.mock("../src/llm/azureOpenAI/http", () => ({
 }))
 
 import { createAzureOpenAILLMClient } from "../src/llm/azureOpenAI"
-import type { MechanicalPassInput } from "../src/llm/types"
+import type { MechanicalPassInput, SemanticPassInput, SemanticTools } from "../src/llm/types"
 
 const originalAzureEnv = {
 	endpoint: process.env.AZURE_OPENAI_ENDPOINT,
@@ -95,6 +95,31 @@ function makeEditorialInput() {
 		},
 		evidence: mechanical.evidence
 	}
+}
+
+function makeSemanticInput(): SemanticPassInput {
+	const mechanical = makeMechanicalInput()
+	return {
+		base: mechanical.base,
+		mechanical: {
+			notes: [
+				"Breaking API contract changes need confirmation against entrypoints.",
+				"New admin and knowledge APIs were added."
+			]
+		},
+		evidence: mechanical.evidence
+	}
+}
+
+const semanticTools: SemanticTools = {
+	getDiffHunks: async () => [],
+	getRepoFileSnippets: async () => [],
+	getRepoSnippetAround: async () => [],
+	getRepoFileMeta: async () => [],
+	searchRepoFiles: async () => [],
+	searchRepoPaths: async () => [],
+	searchRepoText: async () => [],
+	listRepoFiles: async () => []
 }
 
 describe("azure structured JSON retries", () => {
@@ -203,5 +228,49 @@ describe("azure structured JSON retries", () => {
 		expect(userContent).toContain("ref: E3")
 		expect(userContent).not.toContain("08d5867aa1bce1bc2510b869073dc5c64c8dccd27c519b5d78d05d81e9793c6c")
 		expect(userContent).toContain("Use the minimum evidenceNodeIds needed")
+	})
+
+	it("keeps semantic notes compact and strips echoed evidence citations", async () => {
+		azureChatCompletionWithMetaMock
+			.mockResolvedValueOnce({
+				content: JSON.stringify({
+					requestHunkIds: [],
+					requestFileSnippets: [],
+					requestSnippetsAround: [],
+					requestFileSearches: [],
+					requestRepoPathSearches: [],
+					requestRepoSearches: [],
+					requestRepoFileLists: [],
+					requestRepoFileMeta: [],
+					done: true
+				}),
+				finishReason: null,
+				usage: null
+			})
+			.mockResolvedValueOnce({
+				content: JSON.stringify({
+					notes: [
+						"BREAKING: Replaced McpAcknowledgeResponse with AcknowledgeResponse. (evidence: 08d5867aa1bce1bc2510b869073dc5c64c8dccd27c519b5d78d05d81e9793c6c, 66b59f5f57c6754fd6467fee1fcc7e9b9ed224ad1b2bb898a7380e557a7f6218)",
+						"Added admin and knowledge APIs. (evidenceNodeIds: 8c7147a9bc815fa0031648fee857808261876e0d06424d9fdc51cee01422999b)",
+						"Added admin and knowledge APIs. (evidenceNodeIds: 8c7147a9bc815fa0031648fee857808261876e0d06424d9fdc51cee01422999b)"
+					]
+				}),
+				finishReason: null,
+				usage: null
+			})
+
+		const client = createAzureOpenAILLMClient()
+		const result = await client.pass2Semantic(makeSemanticInput(), semanticTools)
+
+		expect(result.notes).toEqual([
+			"BREAKING: Replaced McpAcknowledgeResponse with AcknowledgeResponse.",
+			"Added admin and knowledge APIs."
+		])
+
+		const finalMessages = azureChatCompletionWithMetaMock.mock.calls[1]?.[1]?.messages ?? []
+		const finalUserContent = finalMessages[finalMessages.length - 1]?.content
+		expect(finalUserContent).toContain("These are intermediate notes for a later editorial pass")
+		expect(finalUserContent).toContain("Prefer at most 8 notes total")
+		expect(finalUserContent).toContain("Do NOT include evidence IDs, hunk IDs, hashes, file paths")
 	})
 })

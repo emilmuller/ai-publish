@@ -256,6 +256,22 @@ export function sanitizeMechanicalPassNotes(notes: string[]): string[] {
 	return out
 }
 
+export function sanitizeSemanticPassNotes(notes: string[]): string[] {
+	const cleaned = notes
+		.map((note) => note.replace(/\s*\((?:evidence(?:NodeIds?)?|refs?|hunks?)\s*:\s*[^)]*\)/gi, ""))
+		.map((note) => note.replace(/\s+/g, " ").trim())
+		.filter(Boolean)
+
+	const seen = new Set<string>()
+	const out: string[] = []
+	for (const note of cleaned) {
+		if (seen.has(note)) continue
+		seen.add(note)
+		out.push(note)
+	}
+	return out.slice(0, 8)
+}
+
 export function expandEvidenceNodeIds(
 	ids: string[],
 	aliasToEvidenceId: Record<string, string>,
