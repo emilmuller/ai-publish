@@ -38,8 +38,11 @@ import {
 	coerceSnippetRequests,
 	coerceStringArray,
 	parseJsonObject,
+	renderMechanicalEvidenceSummary,
+	sanitizeMechanicalPassNotes,
 	renderEvidenceIndex,
-	renderEvidenceIndexRedactedForReleaseNotes
+	renderEvidenceIndexRedactedForReleaseNotes,
+	shouldRetryStructuredJsonParse
 } from "../azureOpenAI/parseAndCoerce"
 import {
 	jsonSchemaResponseFormat,
@@ -78,6 +81,7 @@ function formatChangelogModelForVersionBump(model: ChangelogModel): string {
 
 export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClient {
 	const cfg: OpenAIConfig = { ...toConfigFromEnv(), ...(options ?? {}) }
+	const maxStructuredJsonParseRetries = 3
 
 	async function chatJsonStructured<T>(
 		label: string,
@@ -86,25 +90,54 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 		params?: { maxTokens?: number }
 	): Promise<T> {
 		const trace = traceLLMEnabled()
-		if (trace) {
-			logInfo("llm:request", {
-				provider: "openai",
-				label,
-				messages: messages.length,
-				maxTokens: params?.maxTokens ?? null
+		let currentMaxTokens = params?.maxTokens
+		for (let attempt = 0; ; attempt++) {
+			if (trace) {
+				logInfo("llm:request", {
+					provider: "openai",
+					label,
+					attempt,
+					messages: messages.length,
+					maxTokens: currentMaxTokens ?? null
+				})
+			}
+
+			const outputLabel = attempt === 0 ? `openai:${label}` : `openai:${label}:retry${attempt}`
+			const content = await openAIChatCompletion(cfg, {
+				messages,
+				temperature: 0,
+				maxTokens: currentMaxTokens,
+				responseFormat: format
 			})
+			if (trace) {
+				logInfo("llm:response", { provider: "openai", label, attempt, chars: content.length })
+			}
+			logLLMOutput(outputLabel, content)
+
+			try {
+				return parseJsonObject<T>(label, content)
+			} catch (e) {
+				const bumped =
+					currentMaxTokens == null ? null : Math.min(32_000, Math.max(4000, Math.trunc(currentMaxTokens * 2)))
+				const canRetry =
+					shouldRetryStructuredJsonParse(content) &&
+					currentMaxTokens != null &&
+					bumped != null &&
+					bumped > currentMaxTokens &&
+					attempt < maxStructuredJsonParseRetries
+				if (!canRetry) throw e
+
+				logInfo("llm:retry", {
+					provider: "openai",
+					label,
+					attempt: attempt + 1,
+					reason: "parseJsonObject_failed_for_truncated_json",
+					prevMaxTokens: currentMaxTokens,
+					nextMaxTokens: bumped
+				})
+				currentMaxTokens = bumped
+			}
 		}
-		const content = await openAIChatCompletion(cfg, {
-			messages,
-			temperature: 0,
-			maxTokens: params?.maxTokens,
-			responseFormat: format
-		})
-		if (trace) {
-			logInfo("llm:response", { provider: "openai", label, chars: content.length })
-		}
-		logLLMOutput(`openai:${label}`, content)
-		return parseJsonObject<T>(label, content)
 	}
 
 	return {
@@ -116,6 +149,9 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 					content: [
 						"Mechanical pass.",
 						"Task: enumerate strictly factual, non-semantic notes about what changed.",
+						"Keep notes terse and high-signal.",
+						"Do not include evidence IDs, hunk IDs, hashes, or copied metadata tables in notes.",
+						"Prefer one summary note plus short file-level notes only when they add new information.",
 						"Output schema:",
 						'{ "notes": string[] }',
 						"",
@@ -125,8 +161,8 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 						"Deterministic mechanical facts (metadata-only; stable):",
 						input.deterministicFacts.map((f) => `- ${f}`).join("\n"),
 						"",
-						"Evidence index (metadata only; no patch text):",
-						renderEvidenceIndex(input.evidence)
+						"Evidence summary (metadata only; no patch text):",
+						renderMechanicalEvidenceSummary(input.evidence)
 					].join("\n")
 				}
 			]
@@ -137,7 +173,7 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 				jsonSchemaResponseFormat("mechanical_pass", schemaNotesOutput),
 				{ maxTokens: 1400 }
 			)
-			return { notes: assertStringArray("Mechanical pass notes", out.notes) }
+			return { notes: sanitizeMechanicalPassNotes(assertStringArray("Mechanical pass notes", out.notes)) }
 		},
 
 		async pass2Semantic(input: SemanticPassInput, tools: SemanticTools): Promise<SemanticPassOutput> {

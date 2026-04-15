@@ -10,7 +10,7 @@ describe("structured JSON retry detection", () => {
 
 	it("retries when JSON starts but is unterminated and finishReason is missing", () => {
 		expect(shouldRetryStructuredJsonParse('{"notes":["a","b"', undefined)).toBe(true)
-		expect(shouldRetryStructuredJsonParse("```json\n{\"notes\":[\"a\"\n```", null)).toBe(true)
+		expect(shouldRetryStructuredJsonParse('```json\n{"notes":["a"\n```', null)).toBe(true)
 	})
 
 	it("does not retry balanced malformed JSON without a truncation signal", () => {

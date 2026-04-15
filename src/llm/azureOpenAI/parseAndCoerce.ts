@@ -152,6 +152,27 @@ export function renderEvidenceIndex(evidence: Record<string, EvidenceNode>): str
 	return lines.join("\n")
 }
 
+export function renderMechanicalEvidenceSummary(evidence: Record<string, EvidenceNode>): string {
+	const ids = Object.keys(evidence).sort()
+	const lines: string[] = []
+	for (const id of ids) {
+		const e = evidence[id]!
+		lines.push(
+			[
+				`file: ${e.filePath}`,
+				e.oldPath ? `oldFile: ${e.oldPath}` : "",
+				`type: ${e.changeType}`,
+				`surface: ${e.surface}`,
+				`binary: ${e.isBinary ? "yes" : "no"}`,
+				`hunks: ${e.hunkIds.length}`
+			]
+				.filter(Boolean)
+				.join(" | ")
+		)
+	}
+	return lines.join("\n")
+}
+
 export function renderEvidenceIndexRedactedForReleaseNotes(evidence: Record<string, EvidenceNode>): string {
 	// Release notes should not encourage leaking internal file paths.
 	// Provide IDs + high-signal metadata only; IDs are still required for auditability.
@@ -179,6 +200,22 @@ export function renderEvidenceIndexRedactedForReleaseNotes(evidence: Record<stri
 		)
 	}
 	return lines.join("\n")
+}
+
+export function sanitizeMechanicalPassNotes(notes: string[]): string[] {
+	const cleaned = notes
+		.map((note) => note.replace(/\s*\(evidenceNodeIds?:\s*[^)]*\)/gi, ""))
+		.map((note) => note.replace(/\s+/g, " ").trim())
+		.filter(Boolean)
+
+	const seen = new Set<string>()
+	const out: string[] = []
+	for (const note of cleaned) {
+		if (seen.has(note)) continue
+		seen.add(note)
+		out.push(note)
+	}
+	return out
 }
 
 export function coerceStringArray(v: unknown): string[] {

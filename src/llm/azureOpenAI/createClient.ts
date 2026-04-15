@@ -38,6 +38,8 @@ import {
 	coerceSnippetRequests,
 	coerceStringArray,
 	parseJsonObject,
+	renderMechanicalEvidenceSummary,
+	sanitizeMechanicalPassNotes,
 	shouldRetryStructuredJsonParse,
 	renderEvidenceIndex,
 	renderEvidenceIndexRedactedForReleaseNotes
@@ -87,6 +89,7 @@ function formatChangelogModelForVersionBump(model: ChangelogModel): string {
 
 export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>): LLMClient {
 	const cfg: AzureOpenAIConfig = { ...toConfigFromEnv(), ...(options ?? {}) }
+	const maxStructuredJsonParseRetries = 3
 
 	async function chatJsonStructured<T>(
 		label: string,
@@ -95,84 +98,81 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 		params?: { maxTokens?: number }
 	): Promise<T> {
 		const trace = traceLLMEnabled()
-		if (trace) {
-			logInfo("llm:request", {
-				provider: "azure",
-				label,
-				messages: messages.length,
-				maxTokens: params?.maxTokens ?? null
-			})
-		}
-		const shouldStream = traceLLMOutputEnabled()
-		let didStream = false
-		const onToken = shouldStream
-			? (chunk: string) => {
-					if (!didStream) {
-						logLLMStreamStart(`azure:${label}`)
-						didStream = true
-					}
-					logLLMStreamChunk(chunk)
-				}
-			: undefined
+		let currentMaxTokens = params?.maxTokens
+		for (let attempt = 0; ; attempt++) {
+			if (trace) {
+				logInfo("llm:request", {
+					provider: "azure",
+					label,
+					attempt,
+					messages: messages.length,
+					maxTokens: currentMaxTokens ?? null
+				})
+			}
 
-		const res = await azureChatCompletionWithMeta(cfg, {
-			messages,
-			temperature: 0,
-			maxTokens: params?.maxTokens,
-			responseFormat: format,
-			onToken
-		})
-		if (didStream) logLLMStreamEnd()
-		const content = res.content
-		if (trace) {
-			logInfo("llm:response", {
-				provider: "azure",
-				label,
-				chars: content.length,
-				finishReason: res.finishReason ?? null,
-				usage: res.usage ?? null
-			})
-		}
-		if (!didStream) logLLMOutput(`azure:${label}`, content)
-		try {
-			return parseJsonObject<T>(label, content)
-		} catch (e) {
-			if (!shouldRetryStructuredJsonParse(content, res.finishReason) || params?.maxTokens == null) throw e
-			const bumped = Math.min(32_000, Math.max(4000, Math.trunc(params.maxTokens * 2)))
-			logInfo("llm:retry", {
-				provider: "azure",
-				label,
-				reason:
-					res.finishReason != null && String(res.finishReason).trim()
-						? "parseJsonObject_failed_after_length_stop"
-						: "parseJsonObject_failed_for_truncated_json",
-				prevMaxTokens: params.maxTokens,
-				nextMaxTokens: bumped,
-				finishReason: res.finishReason ?? null,
-				usage: res.usage ?? null
-			})
-			const shouldStreamRetry = traceLLMOutputEnabled()
-			let didStreamRetry = false
-			const onTokenRetry = shouldStreamRetry
+			const outputLabel = attempt === 0 ? `azure:${label}` : `azure:${label}:retry${attempt}`
+			const shouldStream = traceLLMOutputEnabled()
+			let didStream = false
+			const onToken = shouldStream
 				? (chunk: string) => {
-						if (!didStreamRetry) {
-							logLLMStreamStart(`azure:${label}:retry`)
-							didStreamRetry = true
+						if (!didStream) {
+							logLLMStreamStart(outputLabel)
+							didStream = true
 						}
 						logLLMStreamChunk(chunk)
 					}
 				: undefined
 
-			const res2 = await azureChatCompletionWithMeta(cfg, {
+			const res = await azureChatCompletionWithMeta(cfg, {
 				messages,
 				temperature: 0,
-				maxTokens: bumped,
+				maxTokens: currentMaxTokens,
 				responseFormat: format,
-				onToken: onTokenRetry
+				onToken
 			})
-			if (didStreamRetry) logLLMStreamEnd()
-			if (!didStreamRetry) logLLMOutput(`azure:${label}:retry`, res2.content)
-			return parseJsonObject<T>(label, res2.content)
+			if (didStream) logLLMStreamEnd()
+
+			const content = res.content
+			if (trace) {
+				logInfo("llm:response", {
+					provider: "azure",
+					label,
+					attempt,
+					chars: content.length,
+					finishReason: res.finishReason ?? null,
+					usage: res.usage ?? null
+				})
+			}
+			if (!didStream) logLLMOutput(outputLabel, content)
+
+			try {
+				return parseJsonObject<T>(label, content)
+			} catch (e) {
+				const bumped =
+					currentMaxTokens == null ? null : Math.min(32_000, Math.max(4000, Math.trunc(currentMaxTokens * 2)))
+				const canRetry =
+					shouldRetryStructuredJsonParse(content, res.finishReason) &&
+					currentMaxTokens != null &&
+					bumped != null &&
+					bumped > currentMaxTokens &&
+					attempt < maxStructuredJsonParseRetries
+				if (!canRetry) throw e
+
+				logInfo("llm:retry", {
+					provider: "azure",
+					label,
+					attempt: attempt + 1,
+					reason:
+						res.finishReason != null && String(res.finishReason).trim()
+							? "parseJsonObject_failed_after_length_stop"
+							: "parseJsonObject_failed_for_truncated_json",
+					prevMaxTokens: currentMaxTokens,
+					nextMaxTokens: bumped,
+					finishReason: res.finishReason ?? null,
+					usage: res.usage ?? null
+				})
+				currentMaxTokens = bumped
+			}
 		}
 	}
 
@@ -185,6 +185,9 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 					content: [
 						"Mechanical pass.",
 						"Task: enumerate strictly factual, non-semantic notes about what changed.",
+						"Keep notes terse and high-signal.",
+						"Do not include evidence IDs, hunk IDs, hashes, or copied metadata tables in notes.",
+						"Prefer one summary note plus short file-level notes only when they add new information.",
 						"Output schema:",
 						'{ "notes": string[] }',
 						"",
@@ -194,8 +197,8 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 						"Deterministic mechanical facts (metadata-only; stable):",
 						input.deterministicFacts.map((f) => `- ${f}`).join("\n"),
 						"",
-						"Evidence index (metadata only; no patch text):",
-						renderEvidenceIndex(input.evidence)
+						"Evidence summary (metadata only; no patch text):",
+						renderMechanicalEvidenceSummary(input.evidence)
 					].join("\n")
 				}
 			]
@@ -208,7 +211,7 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 				// Without an explicit budget, the Azure client default can truncate mid-JSON.
 				{ maxTokens: 2000 }
 			)
-			return { notes: assertStringArray("Mechanical pass notes", out.notes) }
+			return { notes: sanitizeMechanicalPassNotes(assertStringArray("Mechanical pass notes", out.notes)) }
 		},
 
 		async pass2Semantic(input: SemanticPassInput, tools: SemanticTools): Promise<SemanticPassOutput> {
