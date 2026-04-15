@@ -74,6 +74,20 @@ function extractFirstJsonValue(text: string): string | null {
 	return null
 }
 
+export function shouldRetryStructuredJsonParse(text: string, finishReason?: string | null): boolean {
+	const finish = (finishReason ?? "").trim().toLowerCase()
+	if (finish === "length" || finish === "max_output_tokens" || finish === "max_tokens") {
+		return true
+	}
+
+	const raw = stripCodeFences(text)
+	const trimmed = raw.trim()
+	if (!trimmed) return false
+	if (trimmed[0] !== "{" && trimmed[0] !== "[") return false
+
+	return extractFirstJsonValue(trimmed) === null
+}
+
 export function parseJsonObject<T>(label: string, text: string): T {
 	const raw = stripCodeFences(text)
 	try {

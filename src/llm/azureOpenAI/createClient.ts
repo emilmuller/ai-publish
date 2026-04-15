@@ -38,6 +38,7 @@ import {
 	coerceSnippetRequests,
 	coerceStringArray,
 	parseJsonObject,
+	shouldRetryStructuredJsonParse,
 	renderEvidenceIndex,
 	renderEvidenceIndexRedactedForReleaseNotes
 } from "./parseAndCoerce"
@@ -136,16 +137,15 @@ export function createAzureOpenAILLMClient(options?: Partial<AzureOpenAIConfig>)
 		try {
 			return parseJsonObject<T>(label, content)
 		} catch (e) {
-			// If Azure cut off output mid-JSON (common when hitting output token limits),
-			// retry once with a larger maxTokens budget.
-			const finish = (res.finishReason ?? "").toLowerCase()
-			const likelyLengthStop = finish === "length" || finish === "max_output_tokens" || finish === "max_tokens"
-			if (!likelyLengthStop || params?.maxTokens == null) throw e
+			if (!shouldRetryStructuredJsonParse(content, res.finishReason) || params?.maxTokens == null) throw e
 			const bumped = Math.min(32_000, Math.max(4000, Math.trunc(params.maxTokens * 2)))
 			logInfo("llm:retry", {
 				provider: "azure",
 				label,
-				reason: "parseJsonObject_failed_after_length_stop",
+				reason:
+					res.finishReason != null && String(res.finishReason).trim()
+						? "parseJsonObject_failed_after_length_stop"
+						: "parseJsonObject_failed_for_truncated_json",
 				prevMaxTokens: params.maxTokens,
 				nextMaxTokens: bumped,
 				finishReason: res.finishReason ?? null,
