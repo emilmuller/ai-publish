@@ -1,4 +1,9 @@
 # Changelog
+## [4.1.0] - 2026-04-15
+
+### Changed
+- Improved resilience for structured JSON outputs by retrying when responses appear truncated, increasing the token budget across up to three attempts.
+- Refined detection of likely-truncated JSON (e.g., incomplete output) to decide when to retry structured output requests.
 ## [4.0.0] - 2026-02-05
 
 ### Changed
