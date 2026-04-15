@@ -29,6 +29,7 @@ import {
 	assertBulletArray,
 	assertString,
 	assertStringArray,
+	createEvidenceRefMaps,
 	coerceRepoFileListRequests,
 	coerceRepoFileMetaRequests,
 	coerceRepoPathSearchRequests,
@@ -37,10 +38,12 @@ import {
 	coerceSnippetAroundRequests,
 	coerceSnippetRequests,
 	coerceStringArray,
+	expandBulletEvidenceNodeIds,
 	parseJsonObject,
 	renderMechanicalEvidenceSummary,
 	sanitizeMechanicalPassNotes,
 	renderEvidenceIndex,
+	renderEvidenceIndexWithRefs,
 	renderEvidenceIndexRedactedForReleaseNotes,
 	shouldRetryStructuredJsonParse
 } from "../azureOpenAI/parseAndCoerce"
@@ -707,6 +710,7 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 		},
 
 		async pass3Editorial(input: EditorialPassInput): Promise<ChangelogModel> {
+			const { aliasToEvidenceId } = createEvidenceRefMaps(input.evidence)
 			const messages: ChatMessage[] = [
 				{ role: "system", content: buildSystemPrompt() },
 				{
@@ -714,7 +718,10 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 					content: [
 						"Editorial pass.",
 						"Task: produce a changelog model with short bullets.",
-						"Every bullet MUST reference existing evidenceNodeIds.",
+						"Every bullet MUST reference existing evidenceNodeIds using the compact refs from the evidence index.",
+						"Use the minimum evidenceNodeIds needed to support each bullet, usually one and never more than three unless strictly necessary.",
+						"Do NOT repeat raw evidence IDs; use only the compact refs shown in the evidence index.",
+						"Prefer grouping closely related evidence into one concise bullet instead of many near-duplicates.",
 						"Bullets must be user-facing: do NOT mention internal file paths, module names, or private identifiers.",
 						"- Only name symbols when they are part of the public API.",
 						"- For internal-only changes, describe user impact (e.g. performance, stability, reliability) without internal jargon.",
@@ -734,8 +741,8 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 							: "",
 						input.commitContext?.commits?.length ? JSON.stringify(input.commitContext) : "",
 						"",
-						"Evidence index (metadata only; no patch text):",
-						renderEvidenceIndex(input.evidence),
+						"Evidence index (compact refs; metadata only; no patch text):",
+						renderEvidenceIndexWithRefs(input.evidence),
 						"",
 						"Mechanical notes:",
 						input.mechanical.notes.map((n) => `- ${n}`).join("\n"),
@@ -758,12 +765,36 @@ export function createOpenAILLMClient(options?: Partial<OpenAIConfig>): LLMClien
 			})
 
 			const model: Omit<ChangelogModel, "evidence"> = {
-				breakingChanges: assertBulletArray("breakingChanges", out.breakingChanges),
-				added: assertBulletArray("added", out.added),
-				changed: assertBulletArray("changed", out.changed),
-				fixed: assertBulletArray("fixed", out.fixed),
-				removed: assertBulletArray("removed", out.removed),
-				internalTooling: assertBulletArray("internalTooling", out.internalTooling)
+				breakingChanges: expandBulletEvidenceNodeIds(
+					assertBulletArray("breakingChanges", out.breakingChanges),
+					aliasToEvidenceId,
+					input.evidence
+				),
+				added: expandBulletEvidenceNodeIds(
+					assertBulletArray("added", out.added),
+					aliasToEvidenceId,
+					input.evidence
+				),
+				changed: expandBulletEvidenceNodeIds(
+					assertBulletArray("changed", out.changed),
+					aliasToEvidenceId,
+					input.evidence
+				),
+				fixed: expandBulletEvidenceNodeIds(
+					assertBulletArray("fixed", out.fixed),
+					aliasToEvidenceId,
+					input.evidence
+				),
+				removed: expandBulletEvidenceNodeIds(
+					assertBulletArray("removed", out.removed),
+					aliasToEvidenceId,
+					input.evidence
+				),
+				internalTooling: expandBulletEvidenceNodeIds(
+					assertBulletArray("internalTooling", out.internalTooling),
+					aliasToEvidenceId,
+					input.evidence
+				)
 			}
 
 			// Evidence is injected by the pipeline runner (deterministically). Returning empty evidence here

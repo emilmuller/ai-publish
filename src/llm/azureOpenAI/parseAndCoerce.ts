@@ -173,6 +173,44 @@ export function renderMechanicalEvidenceSummary(evidence: Record<string, Evidenc
 	return lines.join("\n")
 }
 
+export function createEvidenceRefMaps(evidence: Record<string, EvidenceNode>): {
+	aliasToEvidenceId: Record<string, string>
+	evidenceIdToAlias: Record<string, string>
+} {
+	const ids = Object.keys(evidence).sort()
+	const aliasToEvidenceId: Record<string, string> = {}
+	const evidenceIdToAlias: Record<string, string> = {}
+	for (const [index, id] of ids.entries()) {
+		const alias = `E${index + 1}`
+		aliasToEvidenceId[alias] = id
+		evidenceIdToAlias[id] = alias
+	}
+	return { aliasToEvidenceId, evidenceIdToAlias }
+}
+
+export function renderEvidenceIndexWithRefs(evidence: Record<string, EvidenceNode>): string {
+	const { evidenceIdToAlias } = createEvidenceRefMaps(evidence)
+	const ids = Object.keys(evidence).sort()
+	const lines: string[] = []
+	for (const id of ids) {
+		const e = evidence[id]!
+		lines.push(
+			[
+				`ref: ${evidenceIdToAlias[id]}`,
+				`file: ${e.filePath}`,
+				e.oldPath ? `oldFile: ${e.oldPath}` : "",
+				`type: ${e.changeType}`,
+				`surface: ${e.surface}`,
+				`binary: ${e.isBinary ? "yes" : "no"}`,
+				`hunks: ${e.hunkIds.length}`
+			]
+				.filter(Boolean)
+				.join(" | ")
+		)
+	}
+	return lines.join("\n")
+}
+
 export function renderEvidenceIndexRedactedForReleaseNotes(evidence: Record<string, EvidenceNode>): string {
 	// Release notes should not encourage leaking internal file paths.
 	// Provide IDs + high-signal metadata only; IDs are still required for auditability.
@@ -216,6 +254,36 @@ export function sanitizeMechanicalPassNotes(notes: string[]): string[] {
 		out.push(note)
 	}
 	return out
+}
+
+export function expandEvidenceNodeIds(
+	ids: string[],
+	aliasToEvidenceId: Record<string, string>,
+	evidence: Record<string, EvidenceNode>
+): string[] {
+	const expanded: string[] = []
+	const seen = new Set<string>()
+	for (const rawId of ids) {
+		const trimmed = rawId.trim()
+		if (!trimmed) continue
+		const normalized = trimmed.replace(/^ref\s*:\s*/i, "")
+		const resolved = evidence[normalized] ? normalized : (aliasToEvidenceId[normalized.toUpperCase()] ?? null)
+		if (!resolved || seen.has(resolved)) continue
+		seen.add(resolved)
+		expanded.push(resolved)
+	}
+	return expanded
+}
+
+export function expandBulletEvidenceNodeIds(
+	bullets: ChangelogBullet[],
+	aliasToEvidenceId: Record<string, string>,
+	evidence: Record<string, EvidenceNode>
+): ChangelogBullet[] {
+	return bullets.map((bullet) => ({
+		...bullet,
+		evidenceNodeIds: expandEvidenceNodeIds(bullet.evidenceNodeIds, aliasToEvidenceId, evidence)
+	}))
 }
 
 export function coerceStringArray(v: unknown): string[] {
